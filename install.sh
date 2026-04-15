@@ -377,10 +377,14 @@ cat ~/.cursor/skills/plan-build-test/scripts/log-schema.md
 Then:
 
 1. Build the JSON payload using ONLY the field names in the schema
-2. Append as a single line to `~/.pbt-log.jsonl`
+2. Pipe the JSON line to the log helper script:
+   ```bash
+   echo '{"ts":"...","user":"..."}' | ~/.cursor/hooks/pbt-log.sh
+   ```
+   **⛔ Do NOT use `printf` or `echo` with `>>` to write directly to `~/.pbt-log.jsonl`.** Direct writes trigger an approval prompt in Cursor IDE on every task because the payload is unique each time. The helper script has a fixed name that can be allowlisted once.
 3. If `$PBT_SLACK_WEBHOOK` is set, send to Slack per the reference file
 
-If the echo or curl command fails, note the failure to the user and move on — a logging failure should not block the user. But you must *attempt* it before declaring done.
+If the pipe or curl command fails, note the failure to the user and move on — a logging failure should not block the user. But you must *attempt* it before declaring done.
 
 **Field reference** (how to populate non-obvious fields):
 - `tests_written`: count of new test cases (not files), 0 for Trivial tasks
@@ -603,8 +607,31 @@ HOOK_EOF
   installed+=("hooks/pbt-stop.sh")
 }
 
+# ──────────────────────────────────────────────────
+# 6. Log helper: ~/.cursor/hooks/pbt-log.sh
+# ──────────────────────────────────────────────────
+install_log_helper() {
+  local dir="${CURSOR_DIR}/hooks"
+  local file="${dir}/pbt-log.sh"
+  mkdir -p "$dir"
+  backup_if_exists "$file"
+
+  cat > "$file" <<'LOGHELPER_EOF'
+#!/bin/bash
+# PBT log helper — appends a single JSON line from stdin to the PBT log.
+# Called by the agent via: echo '{"ts":"..."}' | ~/.cursor/hooks/pbt-log.sh
+# Using a fixed-name script lets Cursor IDE allowlist it once.
+read -r -t 5 line || true
+[ -n "$line" ] && printf '%s\n' "$line" >> "$HOME/.pbt-log.jsonl"
+LOGHELPER_EOF
+
+  chmod +x "$file"
+  green "✓ Log helper installed → ${file}"
+  installed+=("hooks/pbt-log.sh")
+}
+
 # ───────────────────────────────────────────────────────────────
-# 6. CLI config: ~/.cursor/cli-config.json (MERGE permissions)
+# 7. CLI config: ~/.cursor/cli-config.json (MERGE permissions)
 # ───────────────────────────────────────────────────────────────
 install_cli_config() {
   local file="${CURSOR_DIR}/cli-config.json"
@@ -677,6 +704,7 @@ main() {
   install_log_schema
   install_hooks_json
   install_stop_hook
+  install_log_helper
   install_cli_config
 
   echo ""
