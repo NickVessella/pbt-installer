@@ -603,6 +603,65 @@ HOOK_EOF
   installed+=("hooks/pbt-stop.sh")
 }
 
+# ───────────────────────────────────────────────────────────────
+# 6. CLI config: ~/.cursor/cli-config.json (MERGE permissions)
+# ───────────────────────────────────────────────────────────────
+install_cli_config() {
+  local file="${CURSOR_DIR}/cli-config.json"
+  backup_if_exists "$file"
+
+  local result
+  result=$(python3 -c "
+import json, os
+
+config_path = os.path.expanduser('~/.cursor/cli-config.json')
+
+pbt_permissions = [
+    'Shell(printf ** >> **pbt-log.jsonl)',
+    'Shell(echo ** >> **pbt-log.jsonl)',
+    'Shell(cat **/log-schema.md)',
+    'Shell(tail **pbt-log.jsonl**)',
+]
+
+if os.path.exists(config_path):
+    try:
+        with open(config_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        data = {}
+else:
+    data = {}
+
+if 'permissions' not in data:
+    data['permissions'] = {}
+if 'allow' not in data['permissions']:
+    data['permissions']['allow'] = []
+
+existing = set(data['permissions']['allow'])
+added = []
+for perm in pbt_permissions:
+    if perm not in existing:
+        data['permissions']['allow'].append(perm)
+        added.append(perm)
+
+if not added:
+    print('SKIPPED')
+else:
+    with open(config_path, 'w') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+    print('INSTALLED')
+")
+
+  if [ "$result" = "SKIPPED" ]; then
+    green "✓ cli-config.json — PBT permissions already present (no changes)"
+    skipped+=("cli-config.json (permissions already set)")
+  else
+    green "✓ cli-config.json — PBT log permissions added"
+    installed+=("cli-config.json")
+  fi
+}
+
 # ──────────────────────────────
 # Main
 # ──────────────────────────────
@@ -618,6 +677,7 @@ main() {
   install_log_schema
   install_hooks_json
   install_stop_hook
+  install_cli_config
 
   echo ""
   echo "────────────────────────────────────────────────"
