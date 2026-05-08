@@ -1,0 +1,31 @@
+.gitignore
+  ce5a438f8ecd471b 1-8
+README.md
+  ce5a438f8ecd471b 1-26
+dashboard/public/index.html
+  ce5a438f8ecd471b 388
+dashboard/README.md
+  ce5a438f8ecd471b 1-36
+install.sh
+  ce5a438f8ecd471b 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.1",
+  "base_commit_sha": "5e0922aa861b765dc922530f914c5709fe0d1c53",
+  "prompts": {
+    "ce5a438f8ecd471b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c5280b46-6764-4008-b10d-3a83f9a8e261",
+        "model": "claude-opus-4-7-thinking-high"
+      },
+      "human_author": "Nick Vessella",
+      "messages": [],
+      "total_additions": 72,
+      "total_deletions": 2,
+      "accepted_lines": 72,
+      "overriden_lines": 0
+    }
+  }
+}
