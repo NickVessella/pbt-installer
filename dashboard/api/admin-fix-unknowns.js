@@ -54,7 +54,7 @@ async function fixLegacy(targetUser, dryRun) {
 
   if (fixed > 0 && !dryRun) {
     await put(LEGACY_KEY, out.join('\n'), {
-      access: 'public',
+      access: 'private',
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: 'application/json',
@@ -95,7 +95,7 @@ async function fixPerEntry(targetUser, dryRun) {
     if (!dryRun) {
       entry.user = targetUser;
       await put(b.pathname, JSON.stringify(entry), {
-        access: 'public',
+        access: 'private',
         addRandomSuffix: false,
         allowOverwrite: true,
         contentType: 'application/json',
