@@ -19,9 +19,12 @@ const PER_ENTRY_PREFIX = 'pbt-entry/';
 
 const SHOULD_FIX = (u) => u === undefined || u === null || u === '' || u === 'unknown';
 
-async function fetchText(url) {
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`fetch ${url}: ${r.status}`);
+async function fetchBlobText(blob) {
+  const r = await fetch(blob.downloadUrl, {
+    headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` },
+    cache: 'no-store',
+  });
+  if (!r.ok) throw new Error(`fetch ${blob.pathname}: ${r.status}`);
   return r.text();
 }
 
@@ -30,7 +33,7 @@ async function fixLegacy(targetUser, dryRun) {
   const blob = result.blobs.find((b) => b.pathname === LEGACY_KEY);
   if (!blob) return { found: false, fixed: 0 };
 
-  const text = await fetchText(blob.url);
+  const text = await fetchBlobText(blob);
   const lines = text.split('\n');
   let fixed = 0;
   const out = [];
@@ -79,7 +82,7 @@ async function fixPerEntry(targetUser, dryRun) {
     scanned += 1;
     let entry;
     try {
-      const txt = await fetchText(b.url);
+      const txt = await fetchBlobText(b);
       entry = JSON.parse(txt);
     } catch (e) {
       errors.push({ pathname: b.pathname, error: String(e).slice(0, 120) });
