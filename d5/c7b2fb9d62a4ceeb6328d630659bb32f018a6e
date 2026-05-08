@@ -1,0 +1,23 @@
+dashboard/api/admin-fix-unknowns.js
+  ce5a438f8ecd471b 4,9,23,25-31,33-45,47,49-65,67,102,107-108,114,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.1",
+  "base_commit_sha": "d5c7b2fb9d62a4ceeb6328d630659bb32f018a6e",
+  "prompts": {
+    "ce5a438f8ecd471b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c5280b46-6764-4008-b10d-3a83f9a8e261",
+        "model": "claude-opus-4-7-thinking-high"
+      },
+      "human_author": "Nick Vessella",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 65,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    }
+  }
+}
