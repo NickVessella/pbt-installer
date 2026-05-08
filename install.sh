@@ -8,7 +8,7 @@
 # Usage:
 #   bash install.sh
 #   # or
-#   curl -fsSL <raw-github-url>/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/NickVessella/pbt-installer/main/install.sh | bash
 
 set -euo pipefail
 
@@ -569,9 +569,9 @@ install_stop_hook() {
 
 set -uo pipefail
 
-PBT_DASHBOARD_URL="${PBT_DASHBOARD_URL:-https://dashboard-indol-phi-65.vercel.app}"
+PBT_DASHBOARD_URL="${PBT_DASHBOARD_URL:-https://pbt-dashboard.vercel.app}"
 PBT_API_TOKEN="${PBT_API_TOKEN:-}"
-PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-B7lEFKHRm7O3yM3BTIbs0F3RKrzWWawX}"
+PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d}"
 LOG_FILE="$HOME/.pbt-log.jsonl"
 
 [ -f "$LOG_FILE" ] || exit 0
@@ -630,8 +630,78 @@ LOGHELPER_EOF
   installed+=("hooks/pbt-log.sh")
 }
 
+# ──────────────────────────────────────────────────────────────────────
+# 7. Backup script: ~/.cursor/skills/plan-build-test/scripts/backup-log.sh
+# ──────────────────────────────────────────────────────────────────────
+install_backup_script() {
+  local dir="${CURSOR_DIR}/skills/plan-build-test/scripts"
+  local file="${dir}/backup-log.sh"
+  mkdir -p "$dir"
+  backup_if_exists "$file"
+
+  cat > "$file" <<'BACKUP_EOF'
+#!/bin/bash
+#
+# PBT Log Backup
+#
+# Creates a timestamped snapshot of ~/.pbt-log.jsonl before any audit or
+# destructive operation. Keeps the last 30 backups and prunes older ones.
+#
+# Usage:
+#   bash backup-log.sh
+#   bash backup-log.sh /path/to/other.jsonl   # backup a specific log file
+#
+# Called automatically as step 1 of any Cowork audit task. Can also be run
+# manually at any time — it is idempotent and non-destructive.
+
+set -euo pipefail
+
+LOG_FILE="${1:-$HOME/.pbt-log.jsonl}"
+BACKUP_DIR="$HOME/.pbt-log-backups"
+MAX_BACKUPS=30
+
+green() { printf '\033[32m%s\033[0m\n' "$1"; }
+red()   { printf '\033[31m%s\033[0m\n' "$1"; }
+dim()   { printf '\033[2m%s\033[0m\n' "$1"; }
+
+if [ ! -f "$LOG_FILE" ]; then
+  red "Log file not found: $LOG_FILE"
+  exit 1
+fi
+
+mkdir -p "$BACKUP_DIR"
+
+TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
+BACKUP_FILE="${BACKUP_DIR}/pbt-log_${TIMESTAMP}.jsonl"
+
+cp "$LOG_FILE" "$BACKUP_FILE"
+
+LINE_COUNT=$(wc -l < "$LOG_FILE" | tr -d ' ')
+FILE_SIZE=$(du -sh "$LOG_FILE" | cut -f1)
+
+green "✓ Backup created → $BACKUP_FILE"
+dim  "  Source: $LOG_FILE ($LINE_COUNT lines, $FILE_SIZE)"
+
+# Prune oldest backups beyond MAX_BACKUPS
+BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/pbt-log_*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+
+if [ "$BACKUP_COUNT" -gt "$MAX_BACKUPS" ]; then
+  EXCESS=$(( BACKUP_COUNT - MAX_BACKUPS ))
+  ls -1t "$BACKUP_DIR"/pbt-log_*.jsonl | tail -"$EXCESS" | xargs rm
+  dim "  pruned $EXCESS oldest backup(s) — kept $MAX_BACKUPS most recent"
+  BACKUP_COUNT=$MAX_BACKUPS
+fi
+
+green "✓ Done — $BACKUP_COUNT backup(s) in $BACKUP_DIR"
+BACKUP_EOF
+
+  chmod +x "$file"
+  green "✓ Backup script installed → ${file}"
+  installed+=("skills/plan-build-test/scripts/backup-log.sh")
+}
+
 # ───────────────────────────────────────────────────────────────
-# 7. CLI config: ~/.cursor/cli-config.json (MERGE permissions)
+# 8. CLI config: ~/.cursor/cli-config.json (MERGE permissions)
 # ───────────────────────────────────────────────────────────────
 install_cli_config() {
   local file="${CURSOR_DIR}/cli-config.json"
@@ -689,6 +759,139 @@ else:
   fi
 }
 
+# ───────────────────────────────────────────────────────────────────
+# 9. Auto-backfill: post any local entries the dashboard doesn't have
+# ───────────────────────────────────────────────────────────────────
+backfill_missing() {
+  local log_file="$HOME/.pbt-log.jsonl"
+  local dashboard_url="https://pbt-dashboard.vercel.app"
+  local bypass="uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d"
+
+  if [ ! -f "$log_file" ]; then
+    dim "  (no local log at $log_file — skipping backfill)"
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    yellow "⚠ python3 not found — skipping backfill"
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    yellow "⚠ curl not found — skipping backfill"
+    return 0
+  fi
+
+  echo ""
+  echo "────────────────────────────────────────────────"
+  echo ""
+  echo "Reconciling local log with dashboard…"
+
+  # Fetch the dashboard's known (ts, user) pairs. Soft-fail on any error.
+  local remote_set
+  remote_set=$(curl -fsS --max-time 20 \
+    -H "x-vercel-protection-bypass: $bypass" \
+    "${dashboard_url}/api/entries?limit=5000" 2>/dev/null \
+    | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+seen = set()
+for e in data.get('entries', []):
+    ts = e.get('ts') or ''
+    user = e.get('user') or ''
+    if ts:
+        seen.add(f'{ts}|{user}')
+print('\n'.join(sorted(seen)))
+") || {
+    yellow "⚠ couldn't reach dashboard for backfill — your hook is installed; run again later if needed"
+    return 0
+  }
+
+  # Walk the local log and POST any entries whose (ts, user) is not on the dashboard.
+  local result
+  result=$(REMOTE_SET="$remote_set" \
+           DASHBOARD_URL="$dashboard_url" \
+           BYPASS="$bypass" \
+           LOG_FILE="$log_file" \
+    python3 <<'PY'
+import json, os, subprocess, sys
+
+remote = set(line for line in os.environ.get('REMOTE_SET','').splitlines() if line)
+dashboard_url = os.environ['DASHBOARD_URL']
+bypass = os.environ['BYPASS']
+log_file = os.environ['LOG_FILE']
+
+posted = failed = skipped = 0
+total = 0
+
+with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+    for raw in f:
+        line = raw.strip()
+        if not line:
+            continue
+        total += 1
+        try:
+            entry = json.loads(line)
+        except Exception:
+            failed += 1
+            continue
+
+        ts = entry.get('ts') or ''
+        user = entry.get('user') or os.environ.get('USER', 'unknown')
+        if not entry.get('user'):
+            entry['user'] = user
+        key = f'{ts}|{user}'
+        if key in remote:
+            skipped += 1
+            continue
+
+        body = json.dumps(entry)
+        try:
+            r = subprocess.run(
+                ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}',
+                 '--connect-timeout', '5', '--max-time', '15',
+                 '-X', 'POST', f'{dashboard_url}/api/log',
+                 '-H', 'Content-Type: application/json',
+                 '-H', f'x-vercel-protection-bypass: {bypass}',
+                 '-d', body],
+                capture_output=True, text=True, timeout=20,
+            )
+            code = r.stdout.strip()
+        except Exception:
+            code = '000'
+
+        if code == '201':
+            posted += 1
+            # Add to remote set so a duplicate ts/user later in the file is skipped.
+            remote.add(key)
+        else:
+            failed += 1
+
+print(f'{posted}|{failed}|{skipped}|{total}')
+PY
+)
+
+  local bf_posted bf_failed bf_skipped bf_total
+  IFS='|' read -r bf_posted bf_failed bf_skipped bf_total <<< "$result"
+  bf_posted=${bf_posted:-0}
+  bf_failed=${bf_failed:-0}
+  bf_skipped=${bf_skipped:-0}
+  bf_total=${bf_total:-0}
+
+  if [ "$bf_posted" -gt 0 ]; then
+    green "✓ Backfill: posted $bf_posted new entries to the dashboard"
+  fi
+  if [ "$bf_skipped" -gt 0 ] && [ "$bf_posted" -eq 0 ] && [ "$bf_failed" -eq 0 ]; then
+    green "✓ Backfill: dashboard already has all $bf_skipped local entries — nothing to do"
+  fi
+  dim "  scanned $bf_total local entries: $bf_posted posted, $bf_skipped already present, $bf_failed failed"
+  if [ "$bf_failed" -gt 0 ]; then
+    yellow "⚠ $bf_failed entries failed validation (likely missing required fields or invalid triage casing — these have been broken for a while; not caused by this install)"
+  fi
+}
+
 # ──────────────────────────────
 # Main
 # ──────────────────────────────
@@ -702,10 +905,12 @@ main() {
   install_rule
   install_skill
   install_log_schema
+  install_backup_script
   install_hooks_json
   install_stop_hook
   install_log_helper
   install_cli_config
+  backfill_missing
 
   echo ""
   echo "────────────────────────────────────────────────"

@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="pbt-ui-rev" content="team-layout-2026-04-15">
+<title>Plan-Build-Test · Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --surface: #161a22;
+    --surface2: #1e2430;
+    --surface3: #252d3a;
+    --border: #2a3040;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --dim: #475569;
+    --trivial: #10b981;
+    --small: #3b82f6;
+    --complex: #f59e0b;
+    --investigative: #a855f7;
+    --red: #ef4444;
+    --accent: #6366f1;
+    --cyan: #22d3ee;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  .header { padding: 28px 40px 0; border-bottom: 1px solid var(--border); }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 16px; }
+  .header-left h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+  .header-left p { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  .badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+  .badge.live { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.4); color: #34d399; }
+  .badge.active { background: rgba(99,102,241,0.15); border-color: rgba(99,102,241,0.4); color: #818cf8; }
+  .pulse { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #34d399; margin-right: 5px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .tab-nav { display: flex; gap: 0; overflow-x: auto; }
+  .tab-btn { font-size: 13px; font-weight: 500; padding: 10px 20px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; letter-spacing: -0.1px; white-space: nowrap; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  .main { padding: 24px 40px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 20px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 8px; }
+  .kpi-value { font-size: 30px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
+  .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .kpi-value.green { color: var(--trivial); }
+  .kpi-value.blue { color: var(--small); }
+  .kpi-value.amber { color: var(--complex); }
+  .kpi-value.purple { color: var(--investigative); }
+  .kpi-value.white { color: var(--text); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 14px; }
+
+  .calc-details { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .calc-summary { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); cursor: pointer; user-select: none; display: flex; align-items: center; gap: 5px; list-style: none; }
+  .calc-summary::-webkit-details-marker { display: none; }
+  .calc-summary::before { content: '▸'; font-size: 9px; transition: transform 0.15s; }
+  details[open] .calc-summary::before { transform: rotate(90deg); }
+  .calc-body { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.65; display: flex; flex-direction: column; gap: 6px; }
+  .calc-body code { font-size: 10px; background: var(--surface2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', 'Fira Code', monospace; color: #a5b4fc; }
+  .calc-body strong { color: var(--dim); }
+  .calc-formula { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: #a5b4fc; }
+
+  .donut-wrap { display: flex; align-items: center; gap: 20px; }
+  svg.donut { flex-shrink: 0; }
+  .legend { display: flex; flex-direction: column; gap: 9px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .legend-label { color: var(--text); flex: 1; }
+  .legend-count { color: var(--muted); font-size: 11px; }
+  .legend-pct { font-weight: 700; font-size: 11px; }
+
+  .bar-chart { display: flex; flex-direction: column; gap: 9px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; }
+  .bar-label { font-size: 12px; color: var(--text); width: 130px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { flex: 1; background: var(--surface2); border-radius: 4px; height: 7px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; }
+  .bar-val { font-size: 12px; color: var(--muted); width: 24px; text-align: right; flex-shrink: 0; }
+
+  .risk-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .risk-big { font-size: 26px; font-weight: 700; }
+  .progress-track { background: var(--surface2); border-radius: 6px; height: 9px; overflow: hidden; margin-top: 8px; }
+  .progress-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--trivial), #34d399); }
+
+  .health-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .health-row:last-child { border-bottom: none; }
+  .health-label { color: var(--muted); }
+  .chip { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 8px; }
+  .chip.ok  { background: rgba(16,185,129,0.15); color: var(--trivial); }
+  .chip.warn { background: rgba(245,158,11,0.15); color: var(--complex); }
+  .chip.bad  { background: rgba(239,68,68,0.15); color: var(--red); }
+
+  .esc-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .esc-item:last-child { border-bottom: none; }
+  .esc-from { color: var(--muted); padding: 2px 7px; background: var(--surface2); border-radius: 4px; }
+  .esc-arrow { color: var(--border); }
+  .esc-to { color: var(--accent); padding: 2px 7px; background: rgba(99,102,241,0.1); border-radius: 4px; font-weight: 600; }
+  .esc-task { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .timeline { display: flex; flex-direction: column; }
+  .tl-item { display: flex; gap: 12px; padding: 9px 8px; border-bottom: 1px solid var(--border); cursor: default; border-radius: 6px; transition: background 0.12s; }
+  .tl-item:last-child { border-bottom: none; }
+  .tl-item:hover { background: var(--surface2); }
+  .tl-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+  .tl-content { flex: 1; min-width: 0; }
+  .tl-task { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tl-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .tl-tier { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; align-self: flex-start; margin-top: 2px; }
+  .visual-badge { display: inline-flex; align-items: center; font-size: 10px; padding: 1px 5px; border-radius: 6px; background: rgba(245,158,11,0.15); color: var(--complex); margin-left: 5px; }
+
+  .filter-row { display: flex; gap: 6px; }
+  .filter-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.12s; }
+  .filter-btn:hover { background: var(--surface2); color: var(--text); }
+  .filter-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+  .insight-item { display: flex; gap: 10px; font-size: 12px; line-height: 1.55; }
+  .insight-icon { font-size: 13px; flex-shrink: 0; line-height: 1.4; }
+
+  .team-row { display: grid; grid-template-columns: minmax(0, 1fr) 60px 60px 60px 60px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .team-row:last-child { border-bottom: none; }
+  .team-row.header { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+  .team-user-bar-head { display: grid; grid-template-columns: minmax(0, 160px) minmax(0, 1fr); gap: 12px; align-items: center; min-width: 0; }
+  .team-user-bar-head > :nth-child(2) { text-align: center; }
+  .team-user-bar { display: flex; align-items: center; gap: 14px; min-width: 0; overflow: hidden; }
+  .team-user { flex: 0 1 min(14rem, 36%); max-width: min(14rem, 36%); min-width: 0; font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .team-bar-track { flex: 1 1 0; min-width: min(100px, 22vw); }
+  .team-bar-wrap { display: flex; gap: 2px; height: 16px; border-radius: 4px; overflow: hidden; min-width: 0; max-width: 100%; margin-left: auto; }
+  .team-bar-seg { height: 100%; min-width: 2px; }
+  .team-val { text-align: right; color: var(--muted); }
+
+  /* ROI */
+  .roi-surface { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .roi-col-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .roi-col-title.red   { color: var(--red); }
+  .roi-col-title.green { color: var(--trivial); }
+  .cost-item { margin-bottom: 11px; }
+  .cost-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .cost-name { font-size: 12px; color: var(--text); }
+  .cost-sub  { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .cost-val  { font-size: 12px; font-weight: 700; flex-shrink: 0; margin-left: 8px; }
+  .roi-bar-track { background: var(--surface2); border-radius: 4px; height: 5px; overflow: hidden; }
+  .roi-bar-fill  { height: 100%; border-radius: 4px; transition: width 0.5s cubic-bezier(.25,.1,.25,1); }
+  .total-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .total-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+  .total-val   { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+  .scenario-row { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+  .scenario-label { font-size: 11px; color: var(--muted); font-weight: 500; }
+  .toggle-group { display: flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 3px; gap: 3px; }
+  .toggle-btn { font-size: 11px; font-weight: 600; padding: 5px 14px; border-radius: 6px; border: none; background: transparent; color: var(--muted); cursor: pointer; transition: all 0.15s; }
+  .toggle-btn.active { background: var(--accent); color: white; }
+  .toggle-btn:not(.active):hover { background: var(--surface3); color: var(--text); }
+  .roi-kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .roi-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; text-align: center; }
+  .roi-kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 8px; }
+  .roi-kpi-big { font-size: 36px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; }
+  .roi-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .waterfall-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+  .waterfall-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 14px; }
+  .wf-row   { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+  .wf-label { font-size: 11px; width: 200px; flex-shrink: 0; color: var(--text); }
+  .wf-bar-area { flex: 1; position: relative; height: 20px; }
+  .wf-bar   { position: absolute; top: 3px; height: 14px; border-radius: 3px; transition: all 0.5s ease; }
+  .wf-val   { font-size: 11px; font-weight: 600; width: 52px; text-align: right; flex-shrink: 0; }
+  .wf-divider { border: none; border-top: 1px dashed var(--border); margin: 7px 0; }
+  .disclaimer { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; color: var(--complex); background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius: 6px; padding: 5px 10px; margin-bottom: 18px; }
+  .chip-inline { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; vertical-align: middle; margin-left: 4px; }
+  .chip-inline.danger { background: rgba(239,68,68,0.15); color: var(--red); }
+  .chip-inline.info   { background: rgba(99,102,241,0.15); color: #818cf8; }
+  .optim-card { background: var(--surface); border: 1px solid rgba(99,102,241,0.4); border-radius: 12px; padding: 18px; margin-bottom: 20px; position: relative; overflow: hidden; }
+  .optim-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background: linear-gradient(90deg, var(--accent), var(--cyan)); }
+  .optim-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--accent); margin-bottom: 10px; }
+  .optim-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .optim-scenario { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .optim-val { font-size: 18px; font-weight: 700; }
+  .optim-change { font-size: 10px; margin-top: 2px; }
+  .up { color: var(--trivial); }
+  .dn { color: var(--red); }
+
+  /* Personas / Forecast */
+  .forecast-divider { margin: 32px 0 24px; border: none; border-top: 1px solid var(--border); position: relative; }
+  .forecast-divider::after { content: 'TEAM FORECAST'; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); background: var(--bg); padding: 0 16px; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: var(--accent); }
+  .persona-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .persona-card { background: var(--surface); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; }
+  .persona-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .persona-card.bad::before { background: var(--red); }
+  .persona-card.good::before { background: var(--small); }
+  .persona-card.optimized::before { background: var(--trivial); }
+  .persona-card.bad { border: 1px solid rgba(239,68,68,0.3); }
+  .persona-card.good { border: 1px solid rgba(59,130,246,0.3); }
+  .persona-card.optimized { border: 1px solid rgba(16,185,129,0.3); }
+  .persona-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .persona-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .persona-card.bad .persona-avatar { background: rgba(239,68,68,0.15); }
+  .persona-card.good .persona-avatar { background: rgba(59,130,246,0.15); }
+  .persona-card.optimized .persona-avatar { background: rgba(16,185,129,0.15); }
+  .persona-name { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; }
+  .persona-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .persona-desc { font-size: 11px; color: var(--muted); line-height: 1.55; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .persona-metrics { display: flex; flex-direction: column; gap: 8px; }
+  .pm-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+  .pm-label { color: var(--muted); }
+  .pm-val { font-weight: 600; }
+  .pm-bar { height: 4px; border-radius: 2px; background: var(--surface2); margin-top: 2px; overflow: hidden; }
+  .pm-bar-fill { height: 100%; border-radius: 2px; }
+  .forecast-table { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
+  .ft-header { display: grid; grid-template-columns: 180px 1fr 1fr 1fr; background: var(--surface2); border-bottom: 1px solid var(--border); }
+  .ft-header > div { padding: 10px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .ft-row { display: grid; grid-template-columns: 180px 1fr 1fr 1fr; border-bottom: 1px solid var(--border); }
+  .ft-row:last-child { border-bottom: none; }
+  .ft-row > div { padding: 10px 14px; font-size: 12px; }
+  .ft-row > div:first-child { color: var(--muted); font-size: 11px; }
+  .ft-row.highlight { background: rgba(99,102,241,0.05); }
+  .ft-val-bad { color: var(--red); font-weight: 600; }
+  .ft-val-good { color: var(--small); font-weight: 600; }
+  .ft-val-opt { color: var(--trivial); font-weight: 600; }
+  .growth-chart { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+  .gc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 16px; }
+  .gc-legend { display: flex; gap: 16px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .gc-legend-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
+  .gc-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+  /* Time Saved */
+  .time-kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .time-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; }
+  .time-kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 8px; }
+  .time-kpi-big { font-size: 40px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; color: var(--trivial); }
+  .time-kpi-unit { font-size: 16px; font-weight: 600; letter-spacing: 0; }
+  .time-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .rw-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+  .rw-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 14px; }
+  .rw-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .rw-label { font-size: 11px; color: var(--text); width: 160px; flex-shrink: 0; }
+  .rw-bars { flex: 1; display: flex; gap: 4px; align-items: center; }
+  .rw-bar { height: 18px; border-radius: 3px; display: flex; align-items: center; padding: 0 6px; min-width: 24px; }
+  .rw-bar-text { font-size: 9px; font-weight: 700; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+  .rw-total { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+
+  /* Changelog */
+  .cl-entry { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 14px; position: relative; overflow: hidden; }
+  .cl-entry::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; border-radius: 3px 0 0 3px; }
+  .cl-entry.type-feature::before  { background: var(--trivial); }
+  .cl-entry.type-refactor::before { background: var(--small); }
+  .cl-entry.type-fix::before      { background: var(--complex); }
+  .cl-entry.type-process::before  { background: var(--accent); }
+  .cl-entry.type-spike::before    { background: var(--investigative); }
+  .cl-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .cl-date { font-size: 11px; font-weight: 600; color: var(--muted); }
+  .cl-type { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 4px; }
+  .cl-type.feature  { background: rgba(16,185,129,0.15); color: var(--trivial); }
+  .cl-type.refactor { background: rgba(59,130,246,0.15); color: var(--small); }
+  .cl-type.fix      { background: rgba(245,158,11,0.15); color: var(--complex); }
+  .cl-type.process  { background: rgba(99,102,241,0.15); color: var(--accent); }
+  .cl-type.spike    { background: rgba(168,85,247,0.15); color: var(--investigative); }
+  .cl-version { font-size: 9px; font-weight: 600; color: var(--dim); margin-left: auto; }
+  .cl-field { margin-bottom: 8px; }
+  .cl-field:last-child { margin-bottom: 0; }
+  .cl-field-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 3px; }
+  .cl-field-value { font-size: 12px; color: var(--text); line-height: 1.5; }
+  .cl-impact { font-size: 12px; color: var(--cyan); line-height: 1.5; font-style: italic; }
+  .cl-filter-row { display: flex; gap: 6px; margin-bottom: 18px; }
+
+  .loading { display: flex; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); font-size: 14px; }
+  .error-msg { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 14px 18px; color: var(--red); font-size: 13px; margin-bottom: 20px; }
+
+  .footer { padding: 16px 40px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+
+  @media (max-width: 900px) {
+    .kpi-row { grid-template-columns: repeat(3, 1fr); }
+    .grid-2, .grid-3, .persona-grid, .optim-grid, .roi-kpi-row, .time-kpi-row { grid-template-columns: 1fr; }
+    .team-row { grid-template-columns: minmax(0, 1fr) 50px 50px; }
+    .team-row > :nth-child(4), .team-row > :nth-child(5) { display: none; }
+    .team-user { flex: 0 1 min(11rem, 44%); max-width: min(11rem, 44%); }
+    .team-user-bar-head { grid-template-columns: minmax(0, 120px) minmax(0, 1fr); }
+    .ft-header, .ft-row { grid-template-columns: 120px 1fr 1fr 1fr; }
+    .header, .main, .footer { padding-left: 20px; padding-right: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div class="header-left">
+      <h1>Plan &middot; Build &middot; Test &nbsp;&mdash; Dashboard</h1>
+      <p id="header-sub">Live Dashboard &mdash; loading...</p>
+    </div>
+    <div class="header-right">
+      <div class="badge live"><span class="pulse"></span> Live</div>
+      <div class="badge active" id="badge-days">&mdash;</div>
+      <div class="badge" id="badge-total">&mdash;</div>
+    </div>
+  </div>
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('home',this)">Home</button>
+    <button class="tab-btn" onclick="switchTab('performance',this)">Performance</button>
+    <button class="tab-btn" onclick="switchTab('team',this)">Team</button>
+    <button class="tab-btn" onclick="switchTab('roi',this)">Token ROI</button>
+    <button class="tab-btn" onclick="switchTab('time',this)">Time Saved</button>
+    <button class="tab-btn" onclick="switchTab('changelog',this)">Changelog</button>
+  </div>
+</div>
+
+<!-- HOME TAB -->
+<div id="tab-home" class="tab-pane active">
+<div class="main">
+  <div class="card" style="border-color: rgba(99,102,241,0.4); position: relative; overflow: hidden; margin-bottom: 20px;">
+    <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg, var(--accent), var(--cyan));"></div>
+    <div class="card-title" style="color: var(--accent);">Executive Summary</div>
+    <p style="font-size:14px;line-height:1.7;color:var(--text);margin-bottom:12px;">
+      <strong>Plan-Build-Test (PBT)</strong> is a structured coding workflow that runs inside AI coding agents. It triages every coding request by complexity, enforces a plan-then-build-then-test discipline, and logs structured metrics after each task. The result is fewer follow-up prompts, fewer missed bugs, and a growing dataset of how your agent actually performs.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:16px;">
+      <div style="background:var(--surface2);border-radius:8px;padding:14px;text-align:center;">
+        <div style="font-size:24px;font-weight:800;color:var(--trivial);letter-spacing:-1px;">Triage</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Classify before coding</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:8px;padding:14px;text-align:center;">
+        <div style="font-size:24px;font-weight:800;color:var(--accent);letter-spacing:-1px;">Phases</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Plan &rarr; Build &rarr; Test &rarr; Log</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:8px;padding:14px;text-align:center;">
+        <div style="font-size:24px;font-weight:800;color:var(--complex);letter-spacing:-1px;">Metrics</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Every task logged to JSONL</div>
+      </div>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">How It Works</div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--trivial);">1</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Triage</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Every coding request is classified <em>before any tool call</em> into one of four tiers: Trivial, Small Scope, Complex, or Investigative.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(99,102,241,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--accent);">2</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Plan</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Small Scope and above produce a plan before code is written. Plans include goal, files, approach, risks with resolutions, and test strategy.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(59,130,246,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--small);">3</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Build</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Implementation follows the plan's file list as a checklist. Deviations are noted with a reason.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(245,158,11,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--complex);">4</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Test</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Mandatory build gate, runtime gate, existing tests, new tests for new behavior, linter pass, and visual verification for UI changes.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(168,85,247,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--investigative);">5</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Log</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Every task appends a structured JSON entry to <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">~/.pbt-log.jsonl</code>. The task is not complete until the log is written.</div></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Triage Tiers</div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--trivial);"><div style="font-size:13px;font-weight:700;color:var(--trivial);margin-bottom:4px;">Trivial</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">1&ndash;2 files, no design decisions, obvious single implementation. Make the change directly, log, done.</div></div>
+        <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--small);"><div style="font-size:13px;font-weight:700;color:var(--small);margin-bottom:4px;">Small Scope</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">1&ndash;3 files, straightforward logic in existing patterns, low risk. Abbreviated plan, then build and test.</div></div>
+        <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--complex);"><div style="font-size:13px;font-weight:700;color:var(--complex);margin-bottom:4px;">Complex</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">3+ files with logic changes, new modules or architectural patterns, multiple valid approaches. Full plan with risks and test strategy.</div></div>
+        <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--investigative);"><div style="font-size:13px;font-weight:700;color:var(--investigative);margin-bottom:4px;">Investigative</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Root cause unknown, visual/layout bugs where rendering is the unknown, 2+ prior failed attempts. Spike first, then plan-build-test.</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">Key Mechanisms</div>
+      <div style="display:flex;flex-direction:column;gap:12px;font-size:12px;line-height:1.6;">
+        <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Retry Escalation</div><div style="color:var(--muted);">The log doubles as memory. Before triaging, PBT checks the last 3 log entries for prior attempts. One prior attempt bumps the tier one level. Two or more bumps to Complex (or Investigative for visual tasks).</div></div>
+        <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Speculation Circuit Breaker</div><div style="color:var(--muted);">If the plan uses hedging language about runtime behavior, planning stops. The agent must ask the user or escalate to Investigative.</div></div>
+        <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Visual Task Detection</div><div style="color:var(--muted);">Requests involving positioning, alignment, layout, animation, CSS, or visual appearance force visual verification regardless of tier.</div></div>
+        <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Spike Protocol</div><div style="color:var(--muted);">Investigative tasks run a structured spike: hypothesis &rarr; code change &rarr; observe &rarr; repeat (3 attempts max). All spike changes are reverted before the clean build.</div></div>
+        <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Bugfix Cascade Rule</div><div style="color:var(--muted);">When the user reports an error, every fix must pass the build gate and runtime gate before reporting back. Two consecutive errors triggers escalation.</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">What Gets Logged</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px;">Every completed task appends a JSON line to <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">~/.pbt-log.jsonl</code> with a strict schema. This data powers all tabs in this dashboard.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:6px;">Core Fields</div><div style="font-size:11px;color:var(--muted);line-height:1.7;"><code>ts</code> &middot; <code>project</code> &middot; <code>triage</code><br><code>task</code> &middot; <code>files_changed</code> &middot; <code>language</code></div></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:6px;">Test Fields</div><div style="font-size:11px;color:var(--muted);line-height:1.7;"><code>tests_written</code> &middot; <code>tests_fixed</code><br><code>all_tests_passed</code><br><code>visual_check</code> &middot; <code>visual_issues_found</code></div></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:6px;">Risk Fields</div><div style="font-size:11px;color:var(--muted);line-height:1.7;"><code>risks_identified</code><br><code>risks_mitigated</code><br><code>risks_out_of_scope</code> &middot; <code>risks_ask_user</code></div></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:6px;">Escalation Fields</div><div style="font-size:11px;color:var(--muted);line-height:1.7;"><code>escalated</code> &middot; <code>escalated_from</code><br><code>spiked</code> &middot; <code>spike_resolved</code><br><code>mid_plan_spike</code></div></div>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:8px;">About This Dashboard</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;"><strong style="color:var(--dim)">Performance</strong> &mdash; Tier distribution, risk coverage, visual checks, escalation patterns, and a task timeline.<br><strong style="color:var(--dim)">Team</strong> &mdash; Per-user activity, heatmap, and tier preferences.<br><strong style="color:var(--dim)">Token ROI</strong> &mdash; Estimates the token cost of running PBT vs. the cost of catching the same issues in follow-up prompts.<br><strong style="color:var(--dim)">Time Saved</strong> &mdash; Models human time avoided through risk mitigation, visual catches, and escalations.<br><strong style="color:var(--dim)">Changelog</strong> &mdash; History of changes to the PBT skill itself.</div>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:20px;">
+    <div class="card-title">Installation &amp; Setup</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;">
+      <div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;">1. Install the Skill</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">One line installs PBT as a Cursor skill into <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">~/.cursor/</code>. Idempotent &mdash; safe to re-run.</div><div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:#a5b4fc;line-height:1.6;word-break:break-all;">curl -fsSL https://raw.githubusercontent.com/NickVessella/pbt-installer/main/install.sh | bash</div></div>
+      <div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;">2. Mode Gate (Cursor)</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">PBT only activates in Agent mode. Plan, Debug, and Ask modes skip the workflow entirely.</div><div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:#a5b4fc;line-height:1.6;">.cursor/rules/plan-build-test.mdc<br>&rarr; gates on Agent mode only</div></div>
+      <div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;">3. Optional: Slack Alerts</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">Set <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">$PBT_SLACK_WEBHOOK</code> to receive a Slack message after each logged task.</div><div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:#a5b4fc;line-height:1.6;">export PBT_SLACK_WEBHOOK=https://hooks.slack.com/...</div></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:0;">
+    <div class="card-title">Design Philosophy</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;font-size:12px;color:var(--muted);line-height:1.6;">
+      <div><div style="font-weight:600;color:var(--text);margin-bottom:4px;">Classify from the request, not the code</div>Triage happens before any tool call. Reading code to reduce triage uncertainty is explicitly prohibited &mdash; a wrong tier is cheap to escalate, but a pre-triage tool call is an unrecoverable violation.</div>
+      <div><div style="font-weight:600;color:var(--text);margin-bottom:4px;">Plans are contracts, not suggestions</div>The plan's file list is a checklist for the build phase. Deviations are allowed but must be noted. Skipping a planned file requires a written reason.</div>
+      <div><div style="font-weight:600;color:var(--text);margin-bottom:4px;">Done means logged</div>A task is not complete until the structured log entry is written. No exceptions. This turns every session into a data source for future triage accuracy and workflow optimization.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- PERFORMANCE TAB -->
+<div id="tab-performance" class="tab-pane">
+<div class="main">
+  <div id="perf-kpi-section" class="kpi-row"></div>
+  <div class="grid-3">
+    <div class="card"><div class="card-title">Triage Distribution</div><div id="donut-container" class="donut-wrap"></div></div>
+    <div class="card"><div class="card-title">Tasks by Project</div><div id="projects-chart" class="bar-chart"></div></div>
+    <div class="card"><div class="card-title">Risk Management</div><div id="risk-section"></div></div>
+  </div>
+  <div class="grid-3">
+    <div class="card"><div class="card-title">Log Schema Health</div><div id="schema-health"></div></div>
+    <div class="card"><div class="card-title">Visual Verification</div><div id="visual-section"></div></div>
+    <div class="card"><div class="card-title">Tier Escalations &amp; Spikes</div><div id="escalation-section"></div></div>
+  </div>
+  <div class="card" style="margin-bottom:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="card-title" style="margin-bottom:0">Task Log</div>
+      <div class="filter-row" id="timeline-filters" style="margin-bottom:0"></div>
+    </div>
+    <div id="timeline" class="timeline"></div>
+  </div>
+  <div class="grid-2">
+    <div class="card"><div class="card-title">Key Observations</div><div id="observations-section"></div></div>
+    <div class="card"><div class="card-title">Activity by Period</div><div id="activity-section"></div></div>
+  </div>
+</div>
+</div>
+
+<!-- TEAM TAB -->
+<div id="tab-team" class="tab-pane">
+<div class="main">
+  <div id="team-kpis" class="kpi-row" style="grid-template-columns:repeat(4,1fr)"></div>
+  <div class="card" style="margin-bottom:20px"><div class="card-title">Team Activity</div><div id="team-table"></div></div>
+  <div class="grid-2">
+    <div class="card"><div class="card-title">Activity Heatmap (Last 30 Days)</div><div id="heatmap-container"></div></div>
+    <div class="card"><div class="card-title">User Tier Preferences</div><div id="user-tiers"></div></div>
+  </div>
+</div>
+</div>
+
+<!-- TOKEN ROI TAB -->
+<div id="tab-roi" class="tab-pane">
+<div class="main">
+  <div class="disclaimer">&#9888; This is a model, not a measurement. Actual per-conversation token counts are unobserved. Estimates use file sizes (~4 bytes/token) and typical exchange patterns.</div>
+  <div class="scenario-row">
+    <span class="scenario-label">Risk materialization rate</span>
+    <div class="toggle-group">
+      <button class="toggle-btn" onclick="setScenario('pessimistic',this)">Pessimistic (25%)</button>
+      <button class="toggle-btn active" onclick="setScenario('base',this)">Base (40%)</button>
+      <button class="toggle-btn" onclick="setScenario('optimistic',this)">Optimistic (65%)</button>
+    </div>
+    <span style="font-size:10px;color:var(--muted)">= % of mitigated risks that would have become real bugs without PBT</span>
+  </div>
+  <div class="grid-2" style="align-items:start" id="roi-columns"></div>
+  <div class="roi-kpi-row" id="roi-summary-kpis"></div>
+  <div class="waterfall-section"><div class="waterfall-title">Token Waterfall &mdash; where every token goes</div><div id="waterfall"></div></div>
+  <div class="grid-2">
+    <div class="card"><div class="card-title">What tips the balance</div><div id="roi-insights"></div></div>
+    <div class="card"><div class="card-title">Untapped value (not modeled)</div><div id="roi-untapped"></div></div>
+  </div>
+  <hr class="forecast-divider">
+  <div id="roi-personas" class="persona-grid"></div>
+  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--muted);margin-bottom:10px">30 Designers &mdash; Token Impact Forecast</div>
+  <div id="roi-forecast-table"></div>
+  <div id="roi-growth-chart" class="growth-chart"></div>
+  <div id="roi-swing"></div>
+</div>
+</div>
+
+<!-- TIME SAVED TAB -->
+<div id="tab-time" class="tab-pane">
+<div class="main">
+  <div class="disclaimer">&#9201; All time estimates use <strong>20 minutes per rework cycle</strong> &mdash; the designer time spent reviewing, re-prompting, waiting, and re-reviewing when AI output is wrong.</div>
+  <div id="time-hero-kpis" class="time-kpi-row"></div>
+  <div id="time-personas" class="persona-grid"></div>
+  <div id="time-rework-waterfall"></div>
+  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--muted);margin-bottom:10px">30 Designers &mdash; Time Impact Forecast</div>
+  <div id="time-forecast-table"></div>
+  <div id="time-growth-chart" class="growth-chart"></div>
+  <div id="time-summary"></div>
+</div>
+</div>
+
+<!-- CHANGELOG TAB -->
+<div id="tab-changelog" class="tab-pane">
+<div class="main">
+  <div style="margin-bottom:18px"><h2 style="font-size:16px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px">Skill Evolution Log</h2><p style="font-size:11px;color:var(--muted)">Every update to SKILL.md, log-schema.md, hooks, or workflow process &mdash; with rationale and projected impact.</p></div>
+  <div class="cl-filter-row">
+    <button class="filter-btn active" onclick="filterChangelog('all',this)">All</button>
+    <button class="filter-btn" onclick="filterChangelog('feature',this)">Feature</button>
+    <button class="filter-btn" onclick="filterChangelog('refactor',this)">Refactor</button>
+    <button class="filter-btn" onclick="filterChangelog('fix',this)">Fix</button>
+    <button class="filter-btn" onclick="filterChangelog('process',this)">Process</button>
+    <button class="filter-btn" onclick="filterChangelog('spike',this)">Spike-Driven</button>
+  </div>
+  <div id="changelog-entries"></div>
+</div>
+</div>
+
+<div class="footer" id="footer">Data source: Vercel Blob &middot; Plan-Build-Test Live Dashboard &middot; Auto-refreshes every 60s &middot; UI rev: team-layout-2026-04-15</div>
+
+<script>
+const TIER_COLORS = { 'Trivial':'#10b981','Small Scope':'#3b82f6','Complex':'#f59e0b','Investigative':'#a855f7','Unknown':'#64748b' };
+const TIER_ORDER = ['Trivial', 'Small Scope', 'Complex', 'Investigative'];
+let ALL_DATA = [];
+let CURRENT_FILTER = 'all';
+let STATS = {};
+
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function formatDate(ts) {
+  if (!ts) return '\u2014';
+  try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+  catch { return '\u2014'; }
+}
+
+function daysBetween(a, b) { return Math.ceil(Math.abs(b - a) / (1000 * 60 * 60 * 24)); }
+function fmt(n) { return Math.abs(n) >= 1000 ? (n / 1000).toFixed(0) + 'K' : String(Math.round(n)); }
+function fmtFull(n) { return Math.round(n).toLocaleString(); }
+
+function normalizeEntry(d) {
+  if (d.timestamp && !d.ts) d.ts = d.timestamp;
+  if (d.goal && !d.task) d.task = d.goal;
+  if (d.files_touched != null && d.files_changed == null) d.files_changed = d.files_touched;
+  if (d.tier && !d.triage) {
+    const t = String(d.tier).toLowerCase();
+    if (t === 'quick' || t === 'trivial') d.triage = 'Trivial';
+    else if (t === 'small_scope' || t === 'small scope' || t === 'small') d.triage = 'Small Scope';
+    else if (t === 'complex') d.triage = 'Complex';
+    else if (t === 'investigative') d.triage = 'Investigative';
+    else d.triage = d.tier;
+  }
+  if (d.triage) {
+    const t = String(d.triage).toLowerCase();
+    if (t === 'quick' || t === 'trivial') d.triage = 'Trivial';
+    else if (t === 'small_scope' || t === 'small scope' || t === 'small') d.triage = 'Small Scope';
+    else if (t === 'complex') d.triage = 'Complex';
+    else if (t === 'investigative') d.triage = 'Investigative';
+  }
+  if (!TIER_ORDER.includes(d.triage)) d.triage = d.triage || 'Unknown';
+  if (typeof d.files_changed === 'object' && Array.isArray(d.files_changed)) d.files_changed = d.files_changed.length;
+  return d;
+}
+
+async function fetchEntries() {
+  try {
+    const res = await fetch('/api/entries?limit=5000');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    return (json.entries || []).map(normalizeEntry);
+  } catch (err) {
+    console.error('Fetch error:', err);
+    return null;
+  }
+}
+
+function computeStats(data) {
+  const total = data.length;
+  const tiers = {}; TIER_ORDER.forEach(t => tiers[t] = 0);
+  const projects = {}, users = {};
+  let visualIssues = 0, escalated = 0, spiked = 0, risksIdentified = 0, risksMitigated = 0;
+  let risksOutOfScope = 0, visualChecks = 0, filesChanged = 0, filesCreated = 0;
+  let testsWritten = 0, planDeviations = 0, tasksWithRisks = 0;
+  let tasksWithVisualIssues = 0;
+  let oldSchemaCount = 0, missingProjectCount = 0;
+  let earliest = Infinity, latest = 0;
+  const escalationDetails = [];
+
+  data.forEach(d => {
+    const tier = d.triage || 'Unknown';
+    tiers[tier] = (tiers[tier] || 0) + 1;
+    if (d.project && d.project !== 'unknown' && d.project !== '') projects[d.project] = (projects[d.project] || 0) + 1;
+    else missingProjectCount++;
+    if (d.user) users[d.user] = (users[d.user] || 0) + 1;
+    visualIssues += d.visual_issues_found || 0;
+    if (d.visual_issues_found > 0) tasksWithVisualIssues++;
+    if (d.escalated) { escalated++; escalationDetails.push({ from: d.escalated_from || '?', to: d.triage || '?', task: d.task || '' }); }
+    if (d.spiked) spiked++;
+    risksIdentified += d.risks_identified || 0;
+    risksMitigated += d.risks_mitigated || 0;
+    risksOutOfScope += d.risks_out_of_scope || 0;
+    if (d.visual_check) visualChecks++;
+    filesChanged += (typeof d.files_changed === 'number' ? d.files_changed : 0);
+    filesCreated += d.files_created || 0;
+    testsWritten += d.tests_written || 0;
+    planDeviations += d.plan_deviations || 0;
+    if ((d.risks_identified || 0) > 0) tasksWithRisks++;
+    if (d.timestamp || d.tier || d.goal || d.files_touched != null) oldSchemaCount++;
+    if (d.ts) {
+      const t = new Date(d.ts).getTime();
+      if (t && t < earliest) earliest = t;
+      if (t && t > latest) latest = t;
+    }
+  });
+
+  const days = earliest < Infinity ? daysBetween(earliest, latest) + 1 : 0;
+  const projectList = Object.entries(projects).sort((a, b) => b[1] - a[1]);
+  const userList = Object.entries(users).sort((a, b) => b[1] - a[1]);
+  const tasksPerDay = days > 0 ? (total / days).toFixed(1) : '\u2014';
+  const weeks = days / 7;
+  const tasksPerWeek = weeks > 0 ? Math.round(total / weeks) : 0;
+  const sessions = Math.max(Math.ceil(total / 6), 1);
+  const complexTasks = tiers['Complex'] || 0;
+
+  return {
+    total, tiers, projects: projectList, users: userList,
+    visualIssues, visualChecks, tasksWithVisualIssues,
+    escalated, spiked, escalationDetails,
+    risksIdentified, risksMitigated, risksOutOfScope, tasksWithRisks,
+    filesChanged, filesCreated, testsWritten, planDeviations,
+    oldSchemaCount, missingProjectCount,
+    days, tasksPerDay, tasksPerWeek, weeks, sessions,
+    complexTasks, earliest, latest
+  };
+}
+
+/* ── PERFORMANCE TAB RENDERS ── */
+function renderPerfKPIs(s) {
+  const riskRate = s.risksIdentified > 0 ? Math.round(s.risksMitigated / s.risksIdentified * 100) : '\u2014';
+  const escRate = s.total > 0 ? (s.escalated / s.total * 100).toFixed(1) : '0';
+  document.getElementById('perf-kpi-section').innerHTML = `
+    <div class="kpi"><div class="kpi-label">Tasks Completed</div><div class="kpi-value blue">${s.total}</div><div class="kpi-sub">~${s.tasksPerDay} / day</div></div>
+    <div class="kpi"><div class="kpi-label">Files Touched</div><div class="kpi-value white">${s.filesChanged}</div><div class="kpi-sub">+ ${s.filesCreated} created</div></div>
+    <div class="kpi"><div class="kpi-label">Risk Mitigation</div><div class="kpi-value green">${riskRate}%</div><div class="kpi-sub">${s.risksMitigated} of ${s.risksIdentified} risks resolved</div></div>
+    <div class="kpi"><div class="kpi-label">Visual Issues Caught</div><div class="kpi-value amber">${s.visualIssues}</div><div class="kpi-sub">across ${s.tasksWithVisualIssues} tasks w/ checks</div></div>
+    <div class="kpi"><div class="kpi-label">Escalations</div><div class="kpi-value purple">${s.escalated}</div><div class="kpi-sub">${escRate}% escalation rate</div></div>`;
+}
+
+function renderDonut(tiers, total) {
+  const el = document.getElementById('donut-container');
+  if (total === 0) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No data yet</div>'; return; }
+  const r = 50, cx = 60, cy = 60, circ = 2 * Math.PI * r;
+  let offset = 0, paths = '', legendHtml = '';
+  TIER_ORDER.forEach(tier => {
+    const count = tiers[tier] || 0;
+    if (!count) return;
+    const pct = count / total, dash = pct * circ, color = TIER_COLORS[tier];
+    paths += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="18" stroke-dasharray="${dash} ${circ - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" />`;
+    offset += dash;
+    legendHtml += `<div class="legend-item"><div class="legend-dot" style="background:${color}"></div><span class="legend-label">${tier}</span><span class="legend-pct" style="color:${color}">${(pct*100).toFixed(0)}%</span><span class="legend-count">${count}</span></div>`;
+  });
+  el.innerHTML = `<svg class="donut" width="120" height="120" viewBox="0 0 120 120">${paths}<text x="${cx}" y="${cy}" text-anchor="middle" dy="0.35em" style="font-size:20px;font-weight:700;fill:var(--text)">${total}</text></svg><div class="legend">${legendHtml}</div>`;
+}
+
+function renderProjects(projects) {
+  const el = document.getElementById('projects-chart');
+  if (!projects.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No projects yet</div>'; return; }
+  const max = projects[0][1];
+  el.innerHTML = projects.slice(0, 8).map(([n, c]) => `<div class="bar-row"><div class="bar-label">${n||'Unknown'}</div><div class="bar-track"><div class="bar-fill" style="width:${(c/max*100).toFixed(1)}%;background:var(--accent)"></div></div><div class="bar-val">${c}</div></div>`).join('');
+}
+
+function renderRisk(s) {
+  const el = document.getElementById('risk-section');
+  const pct = s.risksIdentified > 0 ? (s.risksMitigated / s.risksIdentified * 100).toFixed(1) : 0;
+  el.innerHTML = `
+    <div style="margin-bottom:14px"><div class="risk-row"><div><div class="risk-big">${s.risksMitigated}<span style="font-size:15px;color:var(--muted);font-weight:400"> / ${s.risksIdentified}</span></div><div style="font-size:10px;color:var(--muted);margin-top:2px">risks identified &amp; mitigated</div></div><div style="font-size:20px;font-weight:700;color:var(--trivial)">${Math.round(pct)}%</div></div><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></div>
+    <div style="display:flex;flex-direction:column;gap:7px">
+      <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--muted)">Mitigated</span><span style="color:var(--trivial);font-weight:600">${s.risksMitigated}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--muted)">Out of scope</span><span style="color:var(--complex);font-weight:600">${s.risksOutOfScope}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--muted)">Tasks with risks</span><span style="font-weight:600">${s.tasksWithRisks} of ${s.complexTasks} Complex</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--muted)">Spikes performed</span><span style="color:var(--investigative);font-weight:600">${s.spiked}</span></div>
+    </div>`;
+}
+
+function renderSchemaHealth(data, s) {
+  const el = document.getElementById('schema-health');
+  const chipClass = (v, warn, bad) => v >= bad ? 'bad' : v >= warn ? 'warn' : 'ok';
+  el.innerHTML = `
+    <div class="health-row"><span class="health-label">Valid entries</span><span class="chip ok">${s.total}</span></div>
+    <div class="health-row"><span class="health-label">Using old field names</span><span class="chip ${chipClass(s.oldSchemaCount,10,50)}">~${s.oldSchemaCount}</span></div>
+    <div class="health-row"><span class="health-label">Missing <code style="font-size:9px">project</code> field</span><span class="chip ${chipClass(s.missingProjectCount,10,40)}">${s.missingProjectCount}</span></div>
+    <div class="health-row"><span class="health-label">Tests written (ever)</span><span class="chip ${s.testsWritten === 0 ? 'bad' : 'ok'}">${s.testsWritten}</span></div>
+    <div class="health-row"><span class="health-label">Plan deviations total</span><span class="chip ${chipClass(s.planDeviations,5,20)}">${s.planDeviations}</span></div>`;
+}
+
+function renderVisual(s) {
+  const el = document.getElementById('visual-section');
+  const checkRate = s.total > 0 ? (s.visualChecks / s.total * 100).toFixed(1) : 0;
+  const issueRate = s.visualChecks > 0 ? (s.tasksWithVisualIssues / s.visualChecks * 100).toFixed(1) : 0;
+  el.innerHTML = `
+    <div style="margin-bottom:14px"><div style="font-size:26px;font-weight:700;letter-spacing:-1px">${s.visualChecks}<span style="font-size:13px;color:var(--muted);font-weight:400"> checks performed</span></div><div style="font-size:11px;color:var(--muted);margin-top:3px">out of ${s.total} tasks (${checkRate}%)</div></div>
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px"><span style="color:var(--muted)">Checks done (${s.visualChecks} / ${s.total})</span><span style="color:var(--trivial);font-weight:600">${checkRate}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${checkRate}%"></div></div></div>
+      <div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px"><span style="color:var(--muted)">Checks that found issues (${s.tasksWithVisualIssues} / ${s.visualChecks})</span><span style="color:var(--complex);font-weight:600">${issueRate}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${issueRate}%;background:linear-gradient(90deg,var(--complex),#fbbf24)"></div></div></div>
+    </div>`;
+}
+
+function renderEscalations(s) {
+  const el = document.getElementById('escalation-section');
+  let html = `<div style="font-size:11px;color:var(--muted);margin-bottom:10px">${s.escalated} tasks re-classified mid-triage</div><div>`;
+  s.escalationDetails.slice(0, 10).forEach(e => {
+    html += `<div class="esc-item"><span class="esc-from">${e.from}</span><span class="esc-arrow">&rarr;</span><span class="esc-to">${e.to}</span><span class="esc-task">${e.task}</span></div>`;
+  });
+  html += `</div><div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border)"><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:7px">Investigative Spikes</div><div style="font-size:11px;color:var(--text)">${s.spiked} spikes performed</div></div>`;
+  el.innerHTML = html;
+}
+
+function renderObservations(s) {
+  const el = document.getElementById('observations-section');
+  const riskPct = s.risksIdentified > 0 ? Math.round(s.risksMitigated / s.risksIdentified * 100) : 0;
+  const missPct = s.total > 0 ? (s.missingProjectCount / s.total * 100).toFixed(1) : 0;
+  const visPct = s.visualChecks > 0 ? (s.tasksWithVisualIssues / s.visualChecks * 100).toFixed(1) : 0;
+  el.innerHTML = `<div style="display:flex;flex-direction:column;gap:11px">
+    <div class="insight-item"><span class="insight-icon" style="color:var(--trivial)">&uarr;</span><div><strong>${riskPct}% risk mitigation rate</strong> on Complex tasks &mdash; ${s.risksOutOfScope} risks scoped out, none left unaddressed.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--complex)">&starf;</span><div><strong>${s.testsWritten} tests written</strong> across all ${s.total} tasks. ${s.testsWritten === 0 ? 'The test phase is consistently skipped &mdash; no test infrastructure in any project.' : ''}</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--small)">&uarr;</span><div><strong>${s.visualIssues} visual bugs caught</strong> across ${s.tasksWithVisualIssues} tasks &mdash; ${visPct}% of visual checks found issues.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--investigative)">&uarr;</span><div><strong>${s.spiked} investigative spikes performed</strong> &mdash; structured hypothesis-test-observe replaced blind re-attempts.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--muted)">~</span><div><strong>${missPct}% entries missing project tag</strong> &mdash; legacy entries drag the average; new entries are consistently tagged.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--complex)">&starf;</span><div><strong>~${s.oldSchemaCount} entries use old field names</strong> &mdash; <code>timestamp</code>, <code>tier</code>, <code>goal</code>, <code>files_touched</code> instead of v1 schema names.</div></div>
+  </div>`;
+}
+
+function renderActivityByPeriod(data) {
+  const el = document.getElementById('activity-section');
+  const buckets = {};
+  data.forEach(d => {
+    if (!d.ts) return;
+    const date = new Date(d.ts).toISOString().slice(0, 10);
+    buckets[date] = (buckets[date] || 0) + 1;
+  });
+  const sorted = Object.entries(buckets).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!sorted.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No dated entries</div>'; return; }
+  const max = Math.max(...sorted.map(e => e[1]));
+  const top = sorted.sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const dated = data.filter(d => d.ts).length;
+  const undated = data.length - dated;
+  let html = `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${dated} dated + ${undated} undated entries</div>`;
+  top.forEach(([date, count]) => {
+    const label = formatDate(date + 'T00:00:00Z');
+    html += `<div class="bar-row"><div class="bar-label">${label}</div><div class="bar-track"><div class="bar-fill" style="width:${(count/max*100).toFixed(1)}%;background:var(--accent)"></div></div><div class="bar-val">${count}</div></div>`;
+  });
+  el.innerHTML = html;
+}
+
+function renderTimeline(filter) {
+  CURRENT_FILTER = filter;
+  const el = document.getElementById('timeline');
+  const items = filter === 'all' ? ALL_DATA : ALL_DATA.filter(d => d.triage === filter);
+  const show = items.slice(0, 100);
+  el.innerHTML = show.map(d => {
+    const c = TIER_COLORS[d.triage] || '#64748b';
+    const tier = d.triage === 'Small Scope' ? 'Small' : d.triage;
+    const esc = d.escalated ? '<span style="font-size:9px;color:var(--investigative);margin-left:5px">&uarr; escalated</span>' : '';
+    const spk = d.spiked ? '<span style="font-size:9px;color:var(--investigative);margin-left:5px">&#9673; spiked</span>' : '';
+    const vis = d.visual_issues_found > 0 ? `<span class="visual-badge">${d.visual_issues_found} visual fix${d.visual_issues_found > 1 ? 'es' : ''}</span>` : '';
+    const proj = d.project && d.project !== 'unknown' ? `<span style="color:var(--accent)">${d.project}</span> &middot; ` : '';
+    const user = d.user ? `<span style="color:var(--cyan)">${d.user}</span> &middot; ` : '';
+    const note = d.notes ? ` &middot; <em>${String(d.notes).substring(0,75)}${String(d.notes).length > 75 ? '&hellip;' : ''}</em>` : '';
+    return `<div class="tl-item"><div class="tl-dot" style="background:${c}"></div><div class="tl-content"><div class="tl-task">${d.task || '(no task)'}${vis}</div><div class="tl-meta">${user}${proj}${formatDate(d.ts)} &middot; ${d.files_changed || 0} file${(d.files_changed||0)!==1?'s':''} changed${note}${esc}${spk}</div></div><div class="tl-tier" style="background:${c}22;color:${c};border:1px solid ${c}44">${tier}</div></div>`;
+  }).join('');
+  if (items.length > 100) el.innerHTML += `<div style="text-align:center;padding:12px;color:var(--muted);font-size:11px">Showing 100 of ${items.length} entries</div>`;
+}
+
+function renderTimelineFilters() {
+  document.getElementById('timeline-filters').innerHTML = ['all', ...TIER_ORDER].map(f => {
+    const label = f === 'all' ? 'All' : (f === 'Small Scope' ? 'Small' : f);
+    return `<button class="filter-btn${f === 'all' ? ' active' : ''}" onclick="filterTimeline('${f}',this)">${label}</button>`;
+  }).join('');
+}
+
+function filterTimeline(f, btn) {
+  document.querySelectorAll('#timeline-filters .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTimeline(f);
+}
+
+/* ── TEAM TAB RENDERS ── */
+function renderTeam(data, s) {
+  const teamKpis = document.getElementById('team-kpis');
+  const thisWeek = data.filter(d => { const t = new Date(d.ts).getTime(); return t > Date.now() - 7*24*60*60*1000; });
+  const today = data.filter(d => { const t = new Date(d.ts); return t.toDateString() === new Date().toDateString(); });
+  teamKpis.innerHTML = `
+    <div class="kpi"><div class="kpi-label">Team Members</div><div class="kpi-value blue">${s.users.length}</div><div class="kpi-sub">Contributing to log</div></div>
+    <div class="kpi"><div class="kpi-label">Tasks This Week</div><div class="kpi-value green">${thisWeek.length}</div><div class="kpi-sub">${(thisWeek.length/Math.max(s.users.length,1)).toFixed(1)} per person</div></div>
+    <div class="kpi"><div class="kpi-label">Tasks Today</div><div class="kpi-value amber">${today.length}</div><div class="kpi-sub">${new Date().toLocaleDateString('en-US',{weekday:'long'})}</div></div>
+    <div class="kpi"><div class="kpi-label">Files Changed</div><div class="kpi-value white">${s.filesChanged}</div><div class="kpi-sub">${(s.filesChanged/Math.max(s.total,1)).toFixed(1)} avg per task</div></div>`;
+  const table = document.getElementById('team-table');
+  const userStats = {};
+  data.forEach(d => {
+    const u = d.user || 'unknown';
+    if (!userStats[u]) userStats[u] = { total:0, tiers:{}, visual:0, escalated:0 };
+    userStats[u].total++;
+    userStats[u].tiers[d.triage||'Unknown'] = (userStats[u].tiers[d.triage||'Unknown']||0) + 1;
+    userStats[u].visual += d.visual_issues_found || 0;
+    if (d.escalated) userStats[u].escalated++;
+  });
+  const sorted = Object.entries(userStats).sort((a,b)=>b[1].total-a[1].total);
+  const maxT = sorted.length > 0 ? sorted[0][1].total : 1;
+  let html = `<div class="team-row header"><div class="team-user-bar-head"><div>User</div><div>Tier Breakdown</div></div><div style="text-align:right">Tasks</div><div style="text-align:right">Visual</div><div style="text-align:right">Esc.</div><div style="text-align:right">Rate</div></div>`;
+  sorted.forEach(([user, us]) => {
+    let bar = ''; TIER_ORDER.forEach(t => { const c = us.tiers[t]||0; if(c) bar += `<div class="team-bar-seg" style="width:${(c/us.total*100).toFixed(1)}%;background:${TIER_COLORS[t]}" title="${t}: ${c}"></div>`; });
+    html += `<div class="team-row"><div class="team-user-bar"><div class="team-user">${user}</div><div class="team-bar-track"><div class="team-bar-wrap" style="width:${(us.total/maxT*100).toFixed(0)}%">${bar}</div></div></div><div class="team-val">${us.total}</div><div class="team-val">${us.visual}</div><div class="team-val">${us.escalated}</div><div class="team-val">${s.days>0?(us.total/s.days*7).toFixed(1):'\u2014'}/wk</div></div>`;
+  });
+  table.innerHTML = html;
+  renderHeatmap(data);
+  renderUserTiers(sorted);
+}
+
+function renderHeatmap(data) {
+  const el = document.getElementById('heatmap-container');
+  const now = new Date(), days = {};
+  for (let i = 29; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate()-i); days[d.toISOString().slice(0,10)] = 0; }
+  data.forEach(d => { if (!d.ts) return; const k = new Date(d.ts).toISOString().slice(0,10); if (k in days) days[k]++; });
+  const maxC = Math.max(...Object.values(days), 1);
+  el.innerHTML = `<div style="display:flex;gap:3px;flex-wrap:wrap">${Object.entries(days).map(([date,count])=>{const i=count/maxC;const bg=count===0?'var(--surface2)':`rgba(99,102,241,${0.2+i*0.8})`;return `<div title="${date}: ${count} tasks" style="width:22px;height:22px;border-radius:3px;background:${bg};border:1px solid var(--border)"></div>`;}).join('')}</div><div style="display:flex;gap:10px;margin-top:8px;font-size:10px;color:var(--muted)"><span>Less</span><div style="display:flex;gap:2px"><div style="width:12px;height:12px;border-radius:2px;background:var(--surface2);border:1px solid var(--border)"></div><div style="width:12px;height:12px;border-radius:2px;background:rgba(99,102,241,0.3)"></div><div style="width:12px;height:12px;border-radius:2px;background:rgba(99,102,241,0.6)"></div><div style="width:12px;height:12px;border-radius:2px;background:rgba(99,102,241,1)"></div></div><span>More</span></div>`;
+}
+
+function renderUserTiers(sorted) {
+  const el = document.getElementById('user-tiers');
+  if (!sorted.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No data</div>'; return; }
+  el.innerHTML = sorted.slice(0,10).map(([user, us]) => {
+    const bars = TIER_ORDER.map(t=>{const c=us.tiers[t]||0;const p=us.total>0?(c/us.total*100).toFixed(0):0;return c>0?`<span style="font-size:10px;color:${TIER_COLORS[t]}">${t==='Small Scope'?'Small':t} ${p}%</span>`:''}).filter(Boolean).join(' &middot; ');
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:2px">${user}</div><div>${bars}</div></div>`;
+  }).join('');
+}
+
+/* ── TOKEN ROI TAB ── */
+const TOK_SKILL = 4760, TOK_SCHEMA = 860;
+const TOK_TRIVIAL = 215, TOK_SMALL = 415, TOK_COMPLEX = 915, TOK_INVEST = 1015;
+const COST_PER_BUG = 5300, COST_VIS = 3950, COST_SPIKE = 10000, COST_DEV = 3000, COST_ESC = 5100;
+const SCENARIOS = { pessimistic: { rate: 0.25 }, base: { rate: 0.40 }, optimistic: { rate: 0.65 } };
+
+function computeROI(scenario) {
+  const s = STATS, rate = SCENARIOS[scenario].rate;
+  const skillReads = TOK_SKILL * s.sessions;
+  const schemaReads = TOK_SCHEMA * s.total;
+  const planTrivial = TOK_TRIVIAL * (s.tiers['Trivial']||0);
+  const planSmall = TOK_SMALL * (s.tiers['Small Scope']||0);
+  const planComplex = TOK_COMPLEX * (s.tiers['Complex']||0);
+  const planInvest = TOK_INVEST * (s.tiers['Investigative']||0);
+  const overhead = skillReads + schemaReads + planTrivial + planSmall + planComplex + planInvest;
+  const bugs = Math.round(s.risksMitigated * rate);
+  const savRisk = bugs * COST_PER_BUG;
+  const savVis = s.visualIssues * COST_VIS;
+  const savSpike = s.spiked * COST_SPIKE;
+  const savDev = s.planDeviations * COST_DEV;
+  const savEsc = s.escalated * COST_ESC;
+  const savings = savRisk + savVis + savSpike + savDev + savEsc;
+  return { overhead, savings, net: savings - overhead, bugs, rate, skillReads, schemaReads, planTrivial, planSmall, planComplex, planInvest, savRisk, savVis, savSpike, savDev, savEsc };
+}
+
+function renderROI(scenario) {
+  const s = STATS, r = computeROI(scenario);
+  const maxCost = Math.max(r.skillReads, r.schemaReads);
+  document.getElementById('roi-columns').innerHTML = `
+    <div class="roi-surface">
+      <div class="roi-col-title red">&uarr; PBT Token Overhead</div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">log-schema.md re-reads <span class="chip-inline danger">biggest cost</span></div><div class="cost-sub">${TOK_SCHEMA} tok &times; ${s.total} tasks</div></div><div class="cost-val" style="color:var(--red)">${fmtFull(r.schemaReads)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${(r.schemaReads/maxCost*100).toFixed(1)}%;background:#ef4444cc"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">SKILL.md reads <span class="chip-inline info">~${s.sessions} sessions</span></div><div class="cost-sub">${TOK_SKILL} tok &times; ${s.sessions} sessions</div></div><div class="cost-val" style="color:var(--red)">${fmtFull(r.skillReads)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${(r.skillReads/maxCost*100).toFixed(1)}%;background:#ef4444"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Plan output &mdash; Complex &times;${s.tiers['Complex']||0}</div><div class="cost-sub">~${TOK_COMPLEX} tok/task</div></div><div class="cost-val" style="color:var(--complex)">${fmtFull(r.planComplex)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${(r.planComplex/maxCost*100).toFixed(1)}%;background:#f59e0b"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Plan output &mdash; Small Scope &times;${s.tiers['Small Scope']||0}</div><div class="cost-sub">~${TOK_SMALL} tok/task</div></div><div class="cost-val" style="color:var(--complex)">${fmtFull(r.planSmall)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${(r.planSmall/maxCost*100).toFixed(1)}%;background:#f59e0baa"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Plan output &mdash; Trivial &times;${s.tiers['Trivial']||0}</div><div class="cost-sub">~${TOK_TRIVIAL} tok/task</div></div><div class="cost-val" style="color:var(--complex)">${fmtFull(r.planTrivial)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${(r.planTrivial/maxCost*100).toFixed(1)}%;background:#f59e0b55"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Plan output &mdash; Investigative &times;${s.tiers['Investigative']||0}</div><div class="cost-sub">~${TOK_INVEST} tok/task</div></div><div class="cost-val" style="color:var(--complex)">${fmtFull(r.planInvest)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${(r.planInvest/maxCost*100).toFixed(1)}%;background:#f59e0b77"></div></div></div>
+      <div class="total-row"><div class="total-label">Total Overhead</div><div class="total-val" style="color:var(--red)">~${fmtFull(r.overhead)}</div></div>
+    </div>
+    <div class="roi-surface">
+      <div class="roi-col-title green">&darr; Tokens Saved (avoided follow-ups)</div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Risk mitigation &mdash; ${r.bugs} bugs prevented</div><div class="cost-sub">${s.risksMitigated} risks &times; ${Math.round(r.rate*100)}% rate &times; ~${fmtFull(COST_PER_BUG)} tok/bug</div></div><div class="cost-val" style="color:var(--trivial)">${fmtFull(r.savRisk)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill bar-risk" style="width:${r.savings>0?(r.savRisk/r.savings*100).toFixed(1):0}%;background:#10b981bb"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Visual bugs caught in-task &mdash; &times;${s.visualIssues}</div><div class="cost-sub">~${fmtFull(COST_VIS)} tok/fix vs. post-delivery report</div></div><div class="cost-val" style="color:var(--trivial)">${fmtFull(r.savVis)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${r.savings>0?(r.savVis/r.savings*100).toFixed(1):0}%;background:#10b98188"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Spike prevented re-attempts &mdash; &times;${s.spiked}</div><div class="cost-sub">~${fmtFull(COST_SPIKE)} tok saved vs. 2 blind re-attempts each</div></div><div class="cost-val" style="color:var(--investigative)">${fmtFull(r.savSpike)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${r.savings>0?(r.savSpike/r.savings*100).toFixed(1):0}%;background:#a855f788"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Plan deviations caught mid-build &mdash; &times;${s.planDeviations}</div><div class="cost-sub">~${fmtFull(COST_DEV)} tok saved vs. post-delivery rework</div></div><div class="cost-val" style="color:var(--cyan)">${fmtFull(r.savDev)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${r.savings>0?(r.savDev/r.savings*100).toFixed(1):0}%;background:#22d3ee55"></div></div></div>
+      <div class="cost-item"><div class="cost-header"><div><div class="cost-name">Escalations corrected &mdash; &times;${s.escalated}</div><div class="cost-sub">~${fmtFull(COST_ESC)} tok/fix vs. &ldquo;this didn&rsquo;t work&rdquo; follow-up</div></div><div class="cost-val" style="color:var(--cyan)">${fmtFull(r.savEsc)}</div></div><div class="roi-bar-track"><div class="roi-bar-fill" style="width:${r.savings>0?(r.savEsc/r.savings*100).toFixed(1):0}%;background:#22d3ee88"></div></div></div>
+      <div class="total-row"><div class="total-label">Total Savings</div><div class="total-val" style="color:var(--trivial)">~${fmtFull(r.savings)}</div></div>
+    </div>`;
+  document.getElementById('roi-summary-kpis').innerHTML = `
+    <div class="roi-kpi"><div class="roi-kpi-label">Overhead</div><div class="roi-kpi-big" style="color:var(--red)">${fmt(r.overhead)}</div><div class="roi-kpi-sub">tokens PBT adds</div></div>
+    <div class="roi-kpi"><div class="roi-kpi-label">Savings</div><div class="roi-kpi-big" style="color:var(--trivial)">${fmt(r.savings)}</div><div class="roi-kpi-sub">tokens avoided</div></div>
+    <div class="roi-kpi" style="border-color:${r.net>=0?'rgba(16,185,129,0.3)':'var(--border)'}"><div class="roi-kpi-label">Net Balance</div><div class="roi-kpi-big" style="color:${r.net>=0?'var(--trivial)':'var(--red)'}">${r.net>=0?'+':''}${fmt(r.net)}</div><div class="roi-kpi-sub">${r.net>=0?'net tokens saved':'tokens spent on discipline'}</div></div>`;
+  updateWaterfall(r);
+}
+
+function updateWaterfall(r) {
+  const items = [
+    { label: `SKILL.md reads (\u00d7${STATS.sessions} sessions)`, val: -r.skillReads, color: '#ef444488' },
+    { label: `log-schema.md re-reads (\u00d7${STATS.total} tasks)`, val: -r.schemaReads, color: '#ef4444cc' },
+    { label: 'Plan output \u2014 all tiers combined', val: -(r.planTrivial+r.planSmall+r.planComplex+r.planInvest), color: '#f59e0b99' },
+    null,
+    { label: `Risk mitigation (${r.bugs} bugs \u00d7 5,300)`, val: r.savRisk, color: '#10b981bb' },
+    { label: `Visual bugs caught (\u00d7${STATS.visualIssues})`, val: r.savVis, color: '#10b98188' },
+    { label: `Spike prevented re-attempts (\u00d7${STATS.spiked})`, val: r.savSpike, color: '#a855f788' },
+    { label: `Plan deviations caught (\u00d7${STATS.planDeviations})`, val: r.savDev, color: '#22d3ee55' },
+    { label: `Escalations corrected (\u00d7${STATS.escalated})`, val: r.savEsc, color: '#22d3ee88' },
+  ];
+  const maxAbs = Math.max(...items.filter(Boolean).map(i => Math.abs(i.val)), 1);
+  document.getElementById('waterfall').innerHTML = items.map(item => {
+    if (!item) return '<hr class="wf-divider">';
+    const w = (Math.abs(item.val)/maxAbs*100).toFixed(1);
+    const isCost = item.val < 0, vc = isCost ? 'var(--red)' : 'var(--trivial)', sign = isCost ? '\u2212' : '+';
+    return `<div class="wf-row"><div class="wf-label">${item.label}</div><div class="wf-bar-area"><div class="wf-bar" style="width:${w}%;background:${item.color};${isCost?'right:0':'left:0'}"></div></div><div class="wf-val" style="color:${vc}">${sign}${fmt(Math.abs(item.val))}</div></div>`;
+  }).join('');
+}
+
+function renderROIInsights() {
+  document.getElementById('roi-insights').innerHTML = `<div style="display:flex;flex-direction:column;gap:10px">
+    <div class="insight-item"><span class="insight-icon" style="color:var(--trivial)">&uarr;</span><div style="font-size:12px;line-height:1.55"><strong>Risk quality matters more than count.</strong> If the mitigated risks were real architectural risks, each materialized bug costs 2\u20133\u00d7 the base estimate.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--trivial)">&uarr;</span><div style="font-size:12px;line-height:1.55"><strong>Longer sessions amortize SKILL.md reads.</strong> At 10+ tasks/session, the 4,760-token skill read cost drops below 500 tok/task.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--complex)">~</span><div style="font-size:12px;line-height:1.55"><strong>Visual verification cost is not in the model.</strong> The visual checks consumed browser/user time. The bugs they caught are the return.</div></div>
+  </div>`;
+  document.getElementById('roi-untapped').innerHTML = `<div style="display:flex;flex-direction:column;gap:10px">
+    <div class="insight-item"><span class="insight-icon" style="color:var(--red)">&starf;</span><div style="font-size:12px;line-height:1.55"><strong>0 tests written \u2014 largest missing multiplier.</strong> A single caught regression saves ~8,000 tokens. Five prevented regressions = 40,000 tokens.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--complex)">~</span><div style="font-size:12px;line-height:1.55"><strong>Retry escalation compounds over time.</strong> The skill reads the log to detect prior attempts and escalates tier. The pattern is maturing.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--cyan)">+</span><div style="font-size:12px;line-height:1.55"><strong>Early user redirect saves an entire build phase.</strong> When the user reads the plan and corrects direction, it saves ~5,000 tokens.</div></div>
+    <div class="insight-item"><span class="insight-icon" style="color:var(--cyan)">+</span><div style="font-size:12px;line-height:1.55"><strong>Log as institutional memory.</strong> Pattern matching from historical entries enables better default assumptions. Value grows asymptotically.</div></div>
+  </div>`;
+}
+
+function renderROIPersonas() {
+  const s = STATS, r = computeROI('base');
+  const overheadPerTask = s.total > 0 ? Math.round(r.overhead / s.total) : 0;
+  const savingsPerTask = s.total > 0 ? Math.round(r.savings / s.total) : 0;
+  const netPerTask = savingsPerTask - overheadPerTask;
+  const cowboyWaste = s.total > 0 ? Math.round((r.savings * 1.15) / s.total) : 3622;
+  const tpw = s.tasksPerWeek || 25;
+  document.getElementById('roi-personas').innerHTML = `
+    <div class="persona-card bad"><div class="persona-header"><div class="persona-avatar">&#x1F920;</div><div><div class="persona-name">The Cowboy</div><div class="persona-sub">No structure, pure improvisation</div></div></div><div class="persona-desc">Skips planning, goes straight to code. No risk analysis, no visual verification, no spikes. When something breaks, starts over from scratch.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Tasks / week</span><span class="pm-val" style="color:var(--red)">~${Math.round(tpw*0.72)}</span></div><div class="pm-row"><span class="pm-label">Net tokens / task</span><span class="pm-val" style="color:var(--red)">\u2212${fmtFull(cowboyWaste)}</span></div><div class="pm-row"><span class="pm-label">Rework rate</span><span class="pm-val" style="color:var(--red)">~30%</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:0%;background:var(--red)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Weekly impact</span><span class="pm-val" style="color:var(--red)">\u2212${fmt(cowboyWaste*Math.round(tpw*0.72))} wasted</span></div></div></div>
+    <div class="persona-card good"><div class="persona-header"><div class="persona-avatar">&#x1F3AF;</div><div><div class="persona-name">The Practitioner</div><div class="persona-sub">Your current baseline \u2014 measured data</div></div></div><div class="persona-desc">Follows PBT consistently: plans before building, identifies risks on Complex tasks, verifies visually, uses spikes when stuck.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Tasks / week</span><span class="pm-val" style="color:var(--small)">~${tpw}</span></div><div class="pm-row"><span class="pm-label">Net tokens / task</span><span class="pm-val" style="color:var(--trivial)">+${fmtFull(netPerTask)}</span></div><div class="pm-row"><span class="pm-label">Rework rate</span><span class="pm-val" style="color:var(--small)">~${s.total>0?(s.escalated/s.total*100).toFixed(1):'4.6'}%</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:65%;background:var(--small)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Weekly impact</span><span class="pm-val" style="color:var(--trivial)">+${fmt(netPerTask*tpw)} saved</span></div></div></div>
+    <div class="persona-card optimized"><div class="persona-header"><div class="persona-avatar">&#x1F3D7;&#xFE0F;</div><div><div class="persona-name">The Architect</div><div class="persona-sub">PBT + all optimizations applied</div></div></div><div class="persona-desc">PBT with schema inlined (\u2212860 tok/task), writes tests (catches regressions), higher risk identification rate. Fewer rework cycles.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Tasks / week</span><span class="pm-val" style="color:var(--trivial)">~${Math.round(tpw*1.12)}</span></div><div class="pm-row"><span class="pm-label">Net tokens / task</span><span class="pm-val" style="color:var(--trivial)">+${fmtFull(netPerTask+860+265)}</span></div><div class="pm-row"><span class="pm-label">Rework rate</span><span class="pm-val" style="color:var(--trivial)">~2%</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:100%;background:var(--trivial)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Weekly impact</span><span class="pm-val" style="color:var(--trivial)">+${fmt((netPerTask+860+265)*Math.round(tpw*1.12))} saved</span></div></div></div>`;
+}
+
+function renderROIForecast() {
+  const s = STATS, r = computeROI('base');
+  const tpw = s.tasksPerWeek || 25;
+  const cowTpw = Math.round(tpw*0.72), archTpw = Math.round(tpw*1.12);
+  const cowWaste = s.total > 0 ? Math.round((r.savings*1.15)/s.total) : 3622;
+  const netPT = s.total > 0 ? Math.round(r.net/s.total) : 1032;
+  const archNet = netPT + 860 + 265;
+  const cowW = cowTpw*30*cowWaste, pracW = tpw*30*netPT, archW = archTpw*30*archNet;
+  document.getElementById('roi-forecast-table').innerHTML = `<div class="forecast-table">
+    <div class="ft-header"><div>Metric</div><div style="color:var(--red)">&#x1F920; Cowboy &times;30</div><div style="color:var(--small)">&#x1F3AF; Practitioner &times;30</div><div style="color:var(--trivial)">&#x1F3D7;&#xFE0F; Architect &times;30</div></div>
+    <div class="ft-row"><div>Tasks / week</div><div class="ft-val-bad">${fmtFull(cowTpw*30)}</div><div class="ft-val-good">${fmtFull(tpw*30)}</div><div class="ft-val-opt">${fmtFull(archTpw*30)}</div></div>
+    <div class="ft-row"><div>Tasks / month</div><div class="ft-val-bad">${fmtFull(Math.round(cowTpw*30*4.33))}</div><div class="ft-val-good">${fmtFull(Math.round(tpw*30*4.33))}</div><div class="ft-val-opt">${fmtFull(Math.round(archTpw*30*4.33))}</div></div>
+    <div class="ft-row highlight"><div>Weekly token impact</div><div class="ft-val-bad">\u2212${fmt(cowW)} wasted</div><div class="ft-val-good">+${fmt(pracW)} saved</div><div class="ft-val-opt">+${fmt(archW)} saved</div></div>
+    <div class="ft-row highlight"><div>Monthly token impact</div><div class="ft-val-bad">\u2212${fmt(cowW*4.33)} wasted</div><div class="ft-val-good">+${fmt(pracW*4.33)} saved</div><div class="ft-val-opt">+${fmt(archW*4.33)} saved</div></div>
+    <div class="ft-row"><div>Annual token impact</div><div class="ft-val-bad">\u2212${fmt(cowW*52)}</div><div class="ft-val-good">+${fmt(pracW*52)}</div><div class="ft-val-opt">+${fmt(archW*52)}</div></div>
+  </div>`;
+  const maxBar = archW * 52;
+  document.getElementById('roi-growth-chart').innerHTML = `<div class="gc-title">Cumulative token savings \u2014 Practitioner vs Architect (30 designers)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">${[1,3,6,12].map(m=>{const pVal=pracW*4.33*m,aVal=archW*4.33*m;return `<div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:8px">Month ${m}</div><div style="display:flex;gap:6px;justify-content:center;align-items:flex-end;height:80px"><div style="width:36px;border-radius:4px 4px 0 0;background:var(--small);height:${Math.max(pVal/maxBar*100,5).toFixed(0)}%"><div style="font-size:9px;font-weight:700;color:white;text-align:center;padding-top:3px">${fmt(pVal)}</div></div><div style="width:36px;border-radius:4px 4px 0 0;background:var(--trivial);height:${Math.max(aVal/maxBar*100,5).toFixed(0)}%"><div style="font-size:9px;font-weight:700;color:white;text-align:center;padding-top:3px">${fmt(aVal)}</div></div></div></div>`;}).join('')}</div>
+    <div class="gc-legend"><div class="gc-legend-item"><div class="gc-legend-dot" style="background:var(--small)"></div> Practitioner (current)</div><div class="gc-legend-item"><div class="gc-legend-dot" style="background:var(--trivial)"></div> Architect (optimized)</div></div>`;
+  const swing = cowW*4.33 + archW*4.33;
+  document.getElementById('roi-swing').innerHTML = `<div class="optim-card" style="border-color:rgba(16,185,129,0.4)"><div class="optim-title" style="color:var(--trivial)">The Adoption Swing: Cowboy &rarr; Architect</div><div style="font-size:12px;color:var(--text);margin-bottom:14px;line-height:1.55">Converting 30 designers from unstructured prompting to optimized PBT represents a <strong>monthly swing of ${fmt(swing)} tokens</strong>. Annually, that's a <strong>${fmt(swing*12)} token opportunity</strong>.</div><div class="optim-grid"><div><div class="optim-scenario">Cowboy &rarr; Practitioner</div><div class="optim-val up">+${fmt(cowW*4.33+pracW*4.33)}</div><div class="optim-change up">monthly swing</div></div><div><div class="optim-scenario">Practitioner &rarr; Architect</div><div class="optim-val up">+${fmt((archW-pracW)*4.33)}</div><div class="optim-change up">monthly uplift</div></div><div><div class="optim-scenario">Cowboy &rarr; Architect</div><div class="optim-val up" style="font-size:24px">+${fmt(swing)}</div><div class="optim-change up">monthly swing</div></div></div></div>`;
+}
+
+function setScenario(scenario, btn) {
+  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderROI(scenario);
+}
+
+/* ── TIME SAVED TAB ── */
+function renderTimeSaved() {
+  const s = STATS, r = computeROI('base');
+  const escRate = s.total > 0 ? s.escalated / s.total : 0.046;
+  const riskBugs = Math.round(s.risksMitigated * 0.6);
+  const blindRetries = s.spiked * 2;
+  const totalCycles = riskBugs + s.visualIssues + blindRetries + s.planDeviations + s.escalated;
+  const hoursTotal = (totalCycles * 20 / 60);
+  const tpw = s.tasksPerWeek || 25;
+  const cowCPT = 0.82, pracCPT = escRate, archCPT = 0.02;
+  const cowTpw = Math.round(tpw * 0.72), archTpw = Math.round(tpw * 1.12);
+  const cowWeekCycles = cowTpw * cowCPT, pracWeekCycles = tpw * pracCPT, archWeekCycles = archTpw * archCPT;
+  const cowWeekHrs = cowWeekCycles * 20 / 60, pracWeekHrs = pracWeekCycles * 20 / 60, archWeekHrs = archWeekCycles * 20 / 60;
+  const savedVsCow = cowWeekHrs - pracWeekHrs;
+  const teamMonthly = savedVsCow * 30 * 4.33;
+  const fte = teamMonthly * 12 / 2000;
+
+  document.getElementById('time-hero-kpis').innerHTML = `
+    <div class="time-kpi" style="border-color:rgba(16,185,129,0.3)"><div class="time-kpi-label">Hours Saved / Week</div><div class="time-kpi-big">${savedVsCow.toFixed(1)}<span class="time-kpi-unit"> hrs</span></div><div class="time-kpi-sub">per designer vs unstructured prompting</div></div>
+    <div class="time-kpi" style="border-color:rgba(16,185,129,0.3)"><div class="time-kpi-label">Team Hours / Month</div><div class="time-kpi-big">${Math.round(teamMonthly)}<span class="time-kpi-unit"> hrs</span></div><div class="time-kpi-sub">30 designers at your current rate</div></div>
+    <div class="time-kpi" style="border-color:rgba(16,185,129,0.3)"><div class="time-kpi-label">FTE Equivalent / Year</div><div class="time-kpi-big">${fte.toFixed(1)}<span class="time-kpi-unit"> designers</span></div><div class="time-kpi-sub">of productivity recovered from rework</div></div>`;
+
+  document.getElementById('time-personas').innerHTML = `
+    <div class="persona-card bad"><div class="persona-header"><div class="persona-avatar">&#x1F920;</div><div><div class="persona-name">The Cowboy</div><div class="persona-sub">No structure \u2014 rework is the norm</div></div></div><div class="persona-desc">Every bug, every visual misfire, every underscoped task hits the designer as a rework cycle. No early interception.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Rework cycles / task</span><span class="pm-val" style="color:var(--red)">${cowCPT}</span></div><div class="pm-row"><span class="pm-label">Hours lost / week</span><span class="pm-val" style="color:var(--red)">${cowWeekHrs.toFixed(1)} hrs</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:100%;background:var(--red)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Annual waste (\u00d730)</span><span class="pm-val" style="color:var(--red)">${fmtFull(Math.round(cowWeekHrs*30*52))} hrs</span></div></div></div>
+    <div class="persona-card good"><div class="persona-header"><div class="persona-avatar">&#x1F3AF;</div><div><div class="persona-name">The Practitioner</div><div class="persona-sub">Your measured baseline</div></div></div><div class="persona-desc">PBT intercepts risks, visual bugs, and scope issues before they reach the designer. Only the ${(escRate*100).toFixed(1)}% escalation residual causes actual rework.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Rework cycles / task</span><span class="pm-val" style="color:var(--small)">${pracCPT.toFixed(2)}</span></div><div class="pm-row"><span class="pm-label">Hours lost / week</span><span class="pm-val" style="color:var(--trivial)">${pracWeekHrs < 1 ? Math.round(pracWeekHrs*60)+' min' : pracWeekHrs.toFixed(1)+' hrs'}</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:${(pracCPT/cowCPT*100).toFixed(0)}%;background:var(--small)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Annual savings (\u00d730)</span><span class="pm-val" style="color:var(--trivial)">${fmtFull(Math.round(savedVsCow*30*52))} hrs</span></div></div></div>
+    <div class="persona-card optimized"><div class="persona-header"><div class="persona-avatar">&#x1F3D7;&#xFE0F;</div><div><div class="persona-name">The Architect</div><div class="persona-sub">PBT + all optimizations</div></div></div><div class="persona-desc">Schema inlined, tests written, higher risk identification. Rework rate drops to ~2%.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Rework cycles / task</span><span class="pm-val" style="color:var(--trivial)">${archCPT}</span></div><div class="pm-row"><span class="pm-label">Hours lost / week</span><span class="pm-val" style="color:var(--trivial)">${archWeekHrs < 1 ? Math.round(archWeekHrs*60)+' min' : archWeekHrs.toFixed(1)+' hrs'}</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:${(archCPT/cowCPT*100).toFixed(0)}%;background:var(--trivial)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Annual savings (\u00d730)</span><span class="pm-val" style="color:var(--trivial)">${fmtFull(Math.round((cowWeekHrs-archWeekHrs)*30*52))} hrs</span></div></div></div>`;
+
+  const maxCyc = Math.max(riskBugs, s.visualIssues, blindRetries, s.planDeviations, s.escalated, 1);
+  document.getElementById('time-rework-waterfall').innerHTML = `<div class="rw-card"><div class="rw-title">What PBT Intercepts \u2014 Rework Cycles Avoided (per ${s.total} tasks)</div>
+    <div class="rw-row"><div class="rw-label">Risk bugs materialize</div><div class="rw-bars"><div class="rw-bar" style="width:${(riskBugs/maxCyc*50).toFixed(0)}%;background:var(--red)"><span class="rw-bar-text">${riskBugs}</span></div></div><div style="font-size:10px;color:var(--trivial);font-weight:600;width:100px;flex-shrink:0">0 \u2014 planned out</div></div>
+    <div class="rw-row"><div class="rw-label">Visual bugs post-delivery</div><div class="rw-bars"><div class="rw-bar" style="width:${(s.visualIssues/maxCyc*50).toFixed(0)}%;background:var(--red)"><span class="rw-bar-text">${s.visualIssues}</span></div></div><div style="font-size:10px;color:var(--trivial);font-weight:600;width:100px;flex-shrink:0">0 \u2014 caught in-task</div></div>
+    <div class="rw-row"><div class="rw-label">Blind re-attempts</div><div class="rw-bars"><div class="rw-bar" style="width:${(blindRetries/maxCyc*50).toFixed(0)}%;background:var(--complex)"><span class="rw-bar-text">${blindRetries}</span></div></div><div style="font-size:10px;color:var(--trivial);font-weight:600;width:100px;flex-shrink:0">0 \u2014 spiked instead</div></div>
+    <div class="rw-row"><div class="rw-label">Plan deviations as rework</div><div class="rw-bars"><div class="rw-bar" style="width:${(s.planDeviations/maxCyc*50).toFixed(0)}%;background:var(--complex)"><span class="rw-bar-text">${s.planDeviations}</span></div></div><div style="font-size:10px;color:var(--trivial);font-weight:600;width:100px;flex-shrink:0">0 \u2014 caught mid-build</div></div>
+    <div class="rw-row"><div class="rw-label">Underscoped tasks fail</div><div class="rw-bars"><div class="rw-bar" style="width:${(s.escalated/maxCyc*50).toFixed(0)}%;background:var(--investigative)"><span class="rw-bar-text">${s.escalated}</span></div></div><div style="font-size:10px;color:var(--trivial);font-weight:600;width:100px;flex-shrink:0">0 \u2014 escalated</div></div>
+    <div class="rw-total"><div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">Total Rework Cycles Intercepted</div><div style="font-size:10px;color:var(--muted);margin-top:2px">Over ${s.total} measured tasks (${s.days} days)</div></div><div style="text-align:right"><div style="font-size:24px;font-weight:800;color:var(--trivial);letter-spacing:-1px">${totalCycles} cycles</div><div style="font-size:11px;color:var(--trivial);font-weight:600">= ${hoursTotal.toFixed(1)} hrs of designer time reclaimed</div></div></div></div>`;
+
+  const cowMonthHrs = cowWeekHrs * 30 * 4.33, pracMonthHrs = pracWeekHrs * 30 * 4.33, archMonthHrs = archWeekHrs * 30 * 4.33;
+  document.getElementById('time-forecast-table').innerHTML = `<div class="forecast-table">
+    <div class="ft-header"><div>Metric</div><div style="color:var(--red)">&#x1F920; Cowboy &times;30</div><div style="color:var(--small)">&#x1F3AF; Practitioner &times;30</div><div style="color:var(--trivial)">&#x1F3D7;&#xFE0F; Architect &times;30</div></div>
+    <div class="ft-row"><div>Rework cycles / week</div><div class="ft-val-bad">${Math.round(cowWeekCycles*30)}</div><div class="ft-val-good">${Math.round(pracWeekCycles*30)}</div><div class="ft-val-opt">${Math.round(archWeekCycles*30)}</div></div>
+    <div class="ft-row"><div>Hours lost to rework / week</div><div class="ft-val-bad">${Math.round(cowWeekHrs*30)} hrs</div><div class="ft-val-good">${(pracWeekHrs*30).toFixed(1)} hrs</div><div class="ft-val-opt">${(archWeekHrs*30).toFixed(1)} hrs</div></div>
+    <div class="ft-row highlight"><div>Hours saved / month (vs Cowboy)</div><div class="ft-val-bad">\u2014</div><div class="ft-val-good">${Math.round((cowMonthHrs-pracMonthHrs))} hrs</div><div class="ft-val-opt">${Math.round((cowMonthHrs-archMonthHrs))} hrs</div></div>
+    <div class="ft-row highlight"><div>Hours saved / year (vs Cowboy)</div><div class="ft-val-bad">\u2014</div><div class="ft-val-good">${fmtFull(Math.round((cowWeekHrs-pracWeekHrs)*30*52))} hrs</div><div class="ft-val-opt">${fmtFull(Math.round((cowWeekHrs-archWeekHrs)*30*52))} hrs</div></div>
+    <div class="ft-row"><div>FTE equivalent recovered</div><div class="ft-val-bad">\u2014</div><div class="ft-val-good">${((cowWeekHrs-pracWeekHrs)*30*52/2000).toFixed(1)} designers</div><div class="ft-val-opt">${((cowWeekHrs-archWeekHrs)*30*52/2000).toFixed(1)} designers</div></div>
+  </div>`;
+
+  const pracAnnual = (cowWeekHrs-pracWeekHrs)*30*52, archAnnual = (cowWeekHrs-archWeekHrs)*30*52;
+  document.getElementById('time-growth-chart').innerHTML = `<div class="gc-title">Cumulative Hours Saved \u2014 30 Designers vs Cowboy Baseline</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">${[1,3,6,12].map(m=>{const pVal=Math.round(pracAnnual/12*m),aVal=Math.round(archAnnual/12*m);return `<div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:8px">Month ${m}</div><div style="display:flex;gap:6px;justify-content:center;align-items:flex-end;height:90px"><div style="width:36px;border-radius:4px 4px 0 0;background:var(--small);height:${Math.max(pVal/archAnnual*100,5).toFixed(0)}%"><div style="font-size:9px;font-weight:700;color:white;text-align:center;padding-top:3px">${fmtFull(pVal)}</div></div><div style="width:36px;border-radius:4px 4px 0 0;background:var(--trivial);height:${Math.max(aVal/archAnnual*100,5).toFixed(0)}%"><div style="font-size:9px;font-weight:700;color:white;text-align:center;padding-top:3px">${fmtFull(aVal)}</div></div></div></div>`;}).join('')}</div>
+    <div class="gc-legend"><div class="gc-legend-item"><div class="gc-legend-dot" style="background:var(--small)"></div> Practitioner \u2014 ${(pracAnnual/2000).toFixed(1)} FTEs/year</div><div class="gc-legend-item"><div class="gc-legend-dot" style="background:var(--trivial)"></div> Architect \u2014 ${(archAnnual/2000).toFixed(1)} FTEs/year</div></div>`;
+
+  const daysRecovered = Math.round(teamMonthly / 8);
+  document.getElementById('time-summary').innerHTML = `<div class="optim-card" style="border-color:rgba(16,185,129,0.4)"><div class="optim-title" style="color:var(--trivial)">What ${Math.round(teamMonthly)} Hours / Month Means</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:14px">
+      <div style="background:var(--surface2);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:800;color:var(--trivial);letter-spacing:-1px">${daysRecovered}</div><div style="font-size:10px;color:var(--muted);margin-top:4px">designer-days recovered<br>per month</div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:800;color:var(--trivial);letter-spacing:-1px">${fte.toFixed(1)}</div><div style="font-size:10px;color:var(--muted);margin-top:4px">full-time designers<br>worth of reclaimed output</div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:800;color:var(--trivial);letter-spacing:-1px">~${(teamMonthly/30).toFixed(1)} days</div><div style="font-size:10px;color:var(--muted);margin-top:4px">per designer per month<br>returned from rework</div></div>
+    </div>
+    <div style="font-size:12px;color:var(--text);line-height:1.55">Every rework cycle is 20 minutes a designer can't spend on actual design work. PBT eliminates ${s.total>0?Math.round((1-escRate)*100):94}% of these cycles by catching problems during the build instead of after delivery. At 30 designers, that's the equivalent of having <strong>${fte.toFixed(1)} additional team members</strong> \u2014 without hiring anyone.</div></div>`;
+}
+
+/* ── CHANGELOG ── */
+const CHANGELOG = [
+  { date:"2026-04-09", type:"refactor", version:"v1.5", what:"Trimmed log-schema.md to strict warning + JSON template only; relocated field notes into SKILL.md Step 5", why:"Per-task re-read was ~860 tokens \u00d7 N tasks \u2014 the single largest overhead item. Field notes were redundant with SKILL.md.", impact:"~60% reduction in per-task log overhead (~860 to ~350 tokens). Zero loss in cross-chat schema fidelity." },
+  { date:"2026-04-09", type:"feature", version:"v1.5", what:"Added runtime smoke test gate (item 2) to Step 4 Test checklist", why:"Build gate catches compilation errors but misses runtime failures: stale .next cache, module-not-found crashes.", impact:"Closes the gap between 'compiles cleanly' and 'actually loads'. Includes stale cache auto-recovery." },
+  { date:"2026-04-09", type:"spike", version:"v1.4", what:"Rewrote spike protocol \u2014 added DO NOT THEORIZE gate, capped attempts at 3, added user-as-eyes fallback", why:"Investigative tasks were producing theories without code changes. Spikes that should take 5 min burned 15 min of reasoning.", impact:"Expect spike duration to drop ~40%. Eliminates 'reasoning without changing code' failure mode." },
+  { date:"2026-04-09", type:"refactor", version:"v1.4", what:"Added speculation circuit breaker to Step 2 (Plan)", why:"Plans with 'should work' language were passing review but failing in build.", impact:"Reduces plan deviations by catching speculative approaches before build starts." },
+  { date:"2026-04-08", type:"feature", version:"v1.3", what:"Added mode gate \u2014 PBT workflow skips entirely in Plan/Debug/Ask modes", why:"SKILL.md was being read in non-coding modes, wasting ~4,760 tokens per invocation.", impact:"Saves ~4,760 tokens per non-Agent-mode interaction." },
+  { date:"2026-04-08", type:"process", version:"v1.3", what:"Mandatory build gate (tsc/npm run build) for ALL tiers including Trivial", why:"Linter-only checks were missing TDZ errors, unclosed JSX, and import failures.", impact:"Eliminates the 'lints clean but doesn't compile' gap." },
+  { date:"2026-04-07", type:"fix", version:"v1.2", what:"Fixed visual check bypass \u2014 agents were logging visual_check:true without waiting for user confirmation", why:"Log showed visual_check:true on tasks where no snapshot was taken.", impact:"Restores integrity of visual verification data." },
+  { date:"2026-04-06", type:"spike", version:"v1.2", what:"Added revert rule to spikes \u2014 all spike changes must be reverted before Step 2 unless fix is 1-2 lines", why:"Spike code was being left in place, bypassing the clean implementation pass.", impact:"Cleaner implementations post-spike." },
+  { date:"2026-04-03", type:"feature", version:"v1.1", what:"Added retry detection with graduated escalation \u2014 tail last 3 log entries", why:"Same task was being attempted 3+ times at Trivial tier.", impact:"Breaks retry loops by forcing deeper analysis on repeated failures." },
+  { date:"2026-03-30", type:"feature", version:"v1.1", what:"Added visual task detection flag and mandatory visual verification for UI changes", why:"Visual bugs were shipping because verification was optional.", impact:"Direct catch of layout/style bugs before user review." },
+  { date:"2026-03-13", type:"feature", version:"v1.0", what:"Added PreCompact hook \u2014 auto-commits staged changes before context compaction", why:"Context compaction was destroying uncommitted work.", impact:"Zero data loss during compaction." },
+  { date:"2026-02-26", type:"feature", version:"v1.0", what:"Initial PBT workflow \u2014 triage \u2192 plan \u2192 build \u2192 test \u2192 log", why:"Unstructured coding sessions had no consistent quality bar, no risk tracking, and no way to measure improvement.", impact:"Foundation for all subsequent improvements." }
+];
+
+function renderChangelog(filter) {
+  const el = document.getElementById('changelog-entries');
+  const items = filter === 'all' ? CHANGELOG : CHANGELOG.filter(d => d.type === filter);
+  el.innerHTML = items.length === 0
+    ? '<div style="text-align:center;padding:40px;color:var(--muted);font-size:12px">No entries for this filter.</div>'
+    : items.map(d => {
+    const tl = d.type.charAt(0).toUpperCase() + d.type.slice(1);
+    return `<div class="cl-entry type-${d.type}"><div class="cl-header"><span class="cl-date">${new Date(d.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span><span class="cl-type ${d.type}">${tl==='Spike'?'Spike-Driven':tl}</span><span class="cl-version">${d.version}</span></div><div class="cl-field"><div class="cl-field-label">What</div><div class="cl-field-value">${d.what}</div></div><div class="cl-field"><div class="cl-field-label">Why</div><div class="cl-field-value">${d.why}</div></div><div class="cl-field"><div class="cl-field-label">Projected Impact</div><div class="cl-impact">${d.impact}</div></div></div>`;
+  }).join('');
+}
+
+function filterChangelog(filter, btn) {
+  const row = btn.closest('.cl-filter-row');
+  row.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderChangelog(filter);
+}
+
+/* ── MAIN ── */
+async function init() {
+  const PBT_UI_REV = document.querySelector('meta[name="pbt-ui-rev"]')?.getAttribute('content') || '';
+  const data = await fetchEntries();
+  if (data === null) {
+    document.getElementById('perf-kpi-section').innerHTML = `<div class="error-msg" style="grid-column:1/-1">Failed to load data from API. Make sure the Vercel project is deployed and Blob storage is configured.<br><span style="font-size:11px;margin-top:4px;display:block;color:var(--muted)">If running locally: <code>cd dashboard && npm i && vercel dev</code></span><br><span style="font-size:11px;margin-top:4px;display:block;color:var(--muted)">Editing <code>public/index.html</code> only changes this machine until you run <code>vercel deploy</code> from <code>dashboard/</code> (or merge to the branch your Vercel project deploys). Footer should show <strong>UI rev: ${PBT_UI_REV}</strong> after a successful deploy.</span></div>`;
+    document.getElementById('footer').innerHTML = `Plan-Build-Test Live Dashboard &middot; UI rev: ${PBT_UI_REV}`;
+    return;
+  }
+  ALL_DATA = data;
+  STATS = computeStats(data);
+  const s = STATS;
+
+  document.getElementById('header-sub').textContent = `Live Dashboard \u2014 ${s.total} tasks \u00b7 ${s.users.length} user${s.users.length!==1?'s':''} \u00b7 ${s.projects.length} projects`;
+  document.getElementById('badge-days').textContent = `~${s.days} days active`;
+  document.getElementById('badge-total').textContent = `${s.total} tasks`;
+
+  renderPerfKPIs(s);
+  renderDonut(s.tiers, s.total);
+  renderProjects(s.projects);
+  renderRisk(s);
+  renderSchemaHealth(data, s);
+  renderVisual(s);
+  renderEscalations(s);
+  renderTimelineFilters();
+  renderTimeline('all');
+  renderObservations(s);
+  renderActivityByPeriod(data);
+  renderTeam(data, s);
+  renderROI('base');
+  renderROIInsights();
+  renderROIPersonas();
+  renderROIForecast();
+  renderTimeSaved();
+  renderChangelog('all');
+
+  document.getElementById('footer').innerHTML = `Data source: Vercel Blob &middot; ${s.total} entries \u00b7 ${s.users.length} users \u00b7 ${s.projects.length} projects &middot; Auto-refreshes every 60s &middot; Last loaded: ${new Date().toLocaleTimeString()} &middot; UI rev: ${PBT_UI_REV}`;
+}
+
+init();
+setInterval(init, 60000);
+</script>
+</body>
+</html>
