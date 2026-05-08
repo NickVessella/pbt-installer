@@ -24,3 +24,5 @@ This deploys hooks, the skill, and a CLI permission bump into `~/.cursor/`. Afte
 ## Dashboard
 
 See [`dashboard/README.md`](./dashboard/README.md) for deploy + env setup.
+
+<!-- last verified auto-deploy: 2026-05-08 -->
