@@ -91,7 +91,7 @@ install_skill() {
   cat > "$file" <<'SKILL_EOF'
 ---
 name: plan-build-test
-description: Structured coding workflow that triages requests by complexity. Automatically applies when the user asks for code changes, new features, refactoring, bug fixes, or implementation work. Enforces plan-then-build-then-test phases for complex changes while fast-tracking simple ones.
+description: Use when the user asks for code changes, new features, bug fixes, refactoring, edits, style changes, or any implementation work. Also use when the user reports an error or broken behavior after a previous edit.
 ---
 
 # Plan-Build-Test Workflow
@@ -111,7 +111,7 @@ description: Structured coding workflow that triages requests by complexity. Aut
 >
 > This line must appear **before any tool call** — before reading files, before searching code, before anything. If you called a tool before outputting this line, you have already violated the workflow. Reading files to "understand the problem" is not pre-work — it is part of the build phase. Triage is based on the user's request, not on inspecting the code.
 >
-> **⛔ Anti-pattern: reading code to reduce triage uncertainty.** You will feel the urge to grep or read files before committing to a tier — "what if I call it Small Scope but it's actually Complex?" This is procrastination dressed as diligence. A wrong tier is cheap: you can escalate mid-task (Small Scope → Complex) with a one-line note. A pre-triage tool call is an unrecoverable violation — you cannot un-read the code.
+> **⛔ Anti-pattern: reading code to reduce triage uncertainty.** A wrong tier is cheap — escalate mid-task with a one-line note. A pre-triage tool call is unrecoverable: you cannot un-read the code.
 >
 > **Classify from the request, not the implementation.** These signals are visible in the user's description alone:
 > - New component/module/service needed → at least Complex
@@ -124,6 +124,15 @@ description: Structured coding workflow that triages requests by complexity. Aut
 > When a non-coding preamble (reading a ticket, fetching context) transitions to the coding task, that transition is where the label must appear. The preamble does not count as "starting the task" — the first code-related tool call does.
 >
 > **The task is NOT complete until Step 5 (Log) is finished.** Do not tell the user you are done until the log entry is written.
+
+**Common pre-triage rationalizations — all are violations:**
+
+| Excuse | Reality |
+|--------|---------|
+| "I need to find the file first to understand the task." | File location is irrelevant to triage. Classify from what the user asked, not what the code looks like. |
+| "Let me just quickly check what's already there." | There is no such thing as a quick pre-check. Any tool call before the label is a violation. |
+| "The request is vague — I need more context before I can classify." | Vague request → ask the user to clarify using `AskQuestion`. Do NOT read code to resolve vagueness. |
+| "I'll output the label right after this one search." | No. Label first. One pre-triage tool call is the same violation as ten. |
 
 ---
 
@@ -293,6 +302,15 @@ Output the plan under a `## Plan` heading before writing any code.
 - Do NOT write any code during this step.
 - **Mid-plan escalation.** If the speculation circuit breaker fires, you may escalate directly from Complex to Investigative (or Small Scope to Investigative). Note `[mid-plan spike]` after the triage label. The existing `escalated` / `escalated_from` log fields track this, plus `mid_plan_spike: true`.
 
+**Common build-before-plan rationalizations — all are violations:**
+
+| Excuse | Reality |
+|--------|---------|
+| "The user is blocked — I'll explain my approach as I go." | Urgency doesn't remove the requirement. A plan written under pressure is faster than code that needs a rewrite. |
+| "I'll summarize what I did at the end — that's essentially a plan." | Post-build summaries describe what happened. Plans constrain what will happen. They are not equivalent. |
+| "The approach is obvious — documenting it would be overhead." | If it's obvious, the plan takes 2 minutes. If it surprises you mid-build, the plan would have caught it. |
+| "I'll just start and adjust as I go." | This is exactly what Complex tier exists to prevent. The plan is a pre-build checklist, not a post-build report. |
+
 ---
 
 ## Step 3: Build
@@ -312,23 +330,13 @@ Implement under a `## Build` heading.
 ## Step 4: Test
 
 **Checklist (complete all that apply):**
-1. **Build gate (mandatory).** Run the project's compile/build command (`tsc --noEmit`, `npm run build`, or equivalent) on every edit — including Trivial fixes. If it fails, fix before continuing. This is not optional. A lint-only check does not replace a build pass; linters do not catch TDZ errors, unclosed JSX, or missing imports that a full compile does.
+1. **Build gate (mandatory).** Run the project's compile/build command (`tsc --noEmit`, `npm run build`, or equivalent) on every edit — including Trivial fixes. If it fails, fix before continuing. This is not optional. A lint-only check does not replace a build pass; linters do not catch TDZ errors, unclosed JSX, or missing imports that a full compile does. A clean build is also necessary but not sufficient — type-only imports, dead branches, and string-literal references all evade compile-time checking. For bulk renames or symbol swaps, see the Task-shape recipes below.
 2. **Runtime gate (mandatory for web projects).** After the build passes, confirm the app actually serves a page. Skip only for libraries, CLI tools, or projects with no running server.
    - If a dev server is running (check terminal output or `lsof -i :3000` / equivalent port), hit the main route with `curl -s -o /dev/null -w '%{http_code}' http://localhost:<port>` and confirm a 2xx response.
    - If the response is not 2xx, or the body contains error signatures (`Server Error`, `Cannot find module`, `Internal Server Error`, `502`, `503`, Cloudflare error tokens), the gate fails.
    - **Stale cache recovery:** If the error matches a module-not-found pattern (e.g., `Cannot find module './XXX.js'`), delete the build cache directory (`.next`, `dist`, `.cache`, or equivalent), restart the dev server, and re-check. This catches `.next` desync from running `npm run build` while the dev server is active.
    - If no dev server is running and the project is a web app, start it, wait for the ready signal, run the check, then stop it (or leave it running if the user's workflow expects it).
-   - **Stylesheet sanity check:** After confirming a 2xx response, fetch the page HTML and verify that stylesheet links actually resolve. Run:
-     ```bash
-     curl -s http://localhost:<port> \
-       | grep -oP '(?<=href=")[^"]*\.css[^"]*' \
-       | while read href; do
-           url=$(echo "$href" | grep -q '^http' && echo "$href" || echo "http://localhost:<port>$href")
-           status=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-           [ "$status" != "200" ] && echo "FAIL: $href returned $status" && exit 1
-         done
-     ```
-     If any stylesheet returns non-200, the runtime gate fails. A page can return 200 OK with completely broken styles — this check catches the "CSS file 404" class of bugs that a status-code-only check misses.
+   - **Stylesheet sanity check:** After confirming a 2xx response, verify stylesheet links resolve — a page can return 200 OK with completely broken styles. Script: `~/.cursor/skills/plan-build-test/scripts/step4-gates.md`. If any stylesheet returns non-200, the runtime gate fails.
    - **User load confirmation (dev server already running only).** If a dev server was already running when the runtime gate started (i.e., you did not start it), use `AskQuestion` to prompt the user:
      > *"The app is serving on localhost:\<port\>. Did it load correctly in your browser?"* — options: **Yes** / **No**
      - **Yes**: runtime gate passes, continue to item 3.
@@ -339,6 +347,13 @@ Implement under a `## Build` heading.
    - Primary success path
    - At least one error or edge case
    - Any boundary conditions identified in the plan's risks
+   - Any recipes from "Task-shape recipes" below that match this change
+
+   **Task-shape recipes** — mandatory test cases by task shape. When the change matches one of these shapes, the listed verification is required in addition to the generic cases above. Build success is necessary but not sufficient for these shapes.
+
+   - **Pure function on key/identifier arrays** (sort, filter, dedupe, diff, reorder, `indexOf`-based lookup): include at least one test with duplicate keys. Functions whose signature is `(keys: K[]) => ...` have a collision failure mode by default — `indexOf` returns only the first match, `Set`-based dedupe drops repeats, stable-sort assumptions break, and so on. Generic happy / empty / null cases will not surface this.
+   - **Bulk symbol rename / find-and-replace / framework swap**: after the edit, run `rg <old-symbol>` (or equivalent) across the source tree and confirm zero hits in non-generated files. The build gate does not catch this — type-only imports are tree-shaken silently, and dead branches, dynamic `require()` strings, and string-literal references all evade compile-time checking.
+
 5. **Run all tests** (existing + new) and confirm they pass.
 6. **Run linters** on all modified and new files. Fix any issues.
 7. **Visual verification** — mandatory when `VISUAL_TASK=true` (set in Step 1), OR when the change touches UI-rendering files (components, styles, templates, layouts, animations). Skip only for backend-only, config, or pure logic changes where `VISUAL_TASK` was not set.
@@ -367,6 +382,15 @@ Implement under a `## Build` heading.
 > **⛔ Final gate.** Write the log entry before declaring done. Do NOT write the log until the visual check (if required) is confirmed by the user or a snapshot.
 
 After every completed task (including Trivial), log metrics.
+
+**Common log-skipping rationalizations — all are violations:**
+
+| Excuse | Reality |
+|--------|---------|
+| "The task is done — the code change is made." | Done means the log is written. Code change + no log = task 90% complete. |
+| "It was only a quick rename, nothing worth logging." | Every completed task logs, including Trivial. Especially Trivial — they're the ones most likely to skip it. |
+| "We're wrapping up the session, I'll log next time." | There is no next time. The log is the last action of this task, before anything else. |
+| "I summarized in my response — that's enough." | The response is for the user. The log entry is for the system. They serve different purposes. |
 
 **⛔ MANDATORY: Re-read the schema file before writing the log.** Do not write the log from memory. Field names have exact spellings — aliases (`timestamp`, `tier`, `goal`, `files_touched`) will corrupt the log.
 
@@ -492,6 +516,39 @@ SCHEMA_EOF
 
   green "✓ Log schema installed → ${file}"
   installed+=("skills/plan-build-test/scripts/log-schema.md")
+}
+
+# ─────────────────────────────────────────────────────
+# 4a. Step 4 gate scripts: ~/.cursor/skills/plan-build-test/scripts/step4-gates.md
+# ─────────────────────────────────────────────────────
+install_step4_gates() {
+  local dir="${CURSOR_DIR}/skills/plan-build-test/scripts"
+  local file="${dir}/step4-gates.md"
+  mkdir -p "$dir"
+  backup_if_exists "$file"
+
+  cat > "$file" <<'GATES_EOF'
+# Step 4 Gate Scripts
+
+## Stylesheet sanity check
+
+Run after confirming a 2xx response from the dev server. Verifies that every CSS file referenced in the page HTML actually resolves. A page can return 200 OK with completely broken styles — this catches the "CSS file 404" class of bugs that a status-code-only check misses.
+
+```bash
+curl -s http://localhost:<port> \
+  | grep -oP '(?<=href=")[^"]*\.css[^"]*' \
+  | while read href; do
+      url=$(echo "$href" | grep -q '^http' && echo "$href" || echo "http://localhost:<port>$href")
+      status=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+      [ "$status" != "200" ] && echo "FAIL: $href returned $status" && exit 1
+    done
+```
+
+If any stylesheet returns non-200, the runtime gate fails.
+GATES_EOF
+
+  green "✓ Step 4 gates installed → ${file}"
+  installed+=("skills/plan-build-test/scripts/step4-gates.md")
 }
 
 # ─────────────────────────────────────────────────────
@@ -905,6 +962,7 @@ main() {
   install_rule
   install_skill
   install_log_schema
+  install_step4_gates
   install_backup_script
   install_hooks_json
   install_stop_hook
