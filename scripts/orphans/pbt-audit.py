@@ -30,9 +30,9 @@ from pathlib import Path
 LOG_FILE = Path.home() / ".pbt-log.jsonl"
 
 DASHBOARD_URL = os.environ.get(
-    "PBT_DASHBOARD_URL", "https://dashboard-indol-phi-65.vercel.app"
+    "PBT_DASHBOARD_URL", "https://pbt-dashboard.vercel.app"
 )
-VERCEL_BYPASS = os.environ.get("PBT_VERCEL_BYPASS", "B7lEFKHRm7O3yM3BTIbs0F3RKrzWWawX")
+VERCEL_BYPASS = os.environ.get("PBT_VERCEL_BYPASS", "uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d")
 
 VALID_TRIAGE = {"Trivial", "Small Scope", "Complex", "Investigative"}
 
