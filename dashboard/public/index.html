@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="pbt-ui-rev" content="team-layout-2026-04-15">
+<meta name="pbt-ui-rev" content="ia-redesign-2026-07-09">
 <title>Plan-Build-Test · Live Dashboard</title>
 <style>
   :root {
@@ -60,17 +60,27 @@
   .kpi-value.white { color: var(--text); }
 
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
-  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 14px; }
+  .card-title { font-size: 12px; font-weight: 600; letter-spacing: -0.1px; color: var(--text); margin-bottom: 14px; }
 
-  .calc-details { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
-  .calc-summary { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); cursor: pointer; user-select: none; display: flex; align-items: center; gap: 5px; list-style: none; }
-  .calc-summary::-webkit-details-marker { display: none; }
-  .calc-summary::before { content: '▸'; font-size: 9px; transition: transform 0.15s; }
-  details[open] .calc-summary::before { transform: rotate(90deg); }
-  .calc-body { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.65; display: flex; flex-direction: column; gap: 6px; }
-  .calc-body code { font-size: 10px; background: var(--surface2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', 'Fira Code', monospace; color: #a5b4fc; }
-  .calc-body strong { color: var(--dim); }
-  .calc-formula { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: #a5b4fc; }
+  .section-heading { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); margin: 28px 0 14px; display: flex; align-items: center; gap: 10px; }
+  .section-heading:first-child { margin-top: 0; }
+  .section-heading .section-sub { font-size: 11px; font-weight: 400; color: var(--muted); }
+
+  .section-collapse { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+  .section-collapse > summary { list-style: none; cursor: pointer; user-select: none; padding: 13px 18px; display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600; color: var(--muted); transition: color 0.12s; }
+  .section-collapse > summary:hover { color: var(--text); }
+  .section-collapse > summary::-webkit-details-marker { display: none; }
+  .section-collapse > summary::before { content: '\25B8'; font-size: 10px; color: var(--dim); transition: transform 0.15s; flex-shrink: 0; }
+  .section-collapse[open] > summary::before { transform: rotate(90deg); }
+  .section-collapse[open] > summary { color: var(--text); border-bottom: 1px solid var(--border); }
+  .collapse-hint { margin-left: auto; font-size: 10px; font-weight: 500; color: var(--dim); }
+  .collapse-body { padding: 16px 18px 18px; }
+
+  .chip-modeled { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 6px; background: rgba(245,158,11,0.12); color: var(--complex); border: 1px solid rgba(245,158,11,0.3); }
+
+  .impact-view { display: none; }
+  .impact-view.active { display: block; }
+  .impact-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
 
   .donut-wrap { display: flex; align-items: center; gap: 20px; }
   svg.donut { flex-shrink: 0; }
@@ -108,7 +118,7 @@
   .esc-to { color: var(--accent); padding: 2px 7px; background: rgba(99,102,241,0.1); border-radius: 4px; font-weight: 600; }
   .esc-task { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .timeline { display: flex; flex-direction: column; }
+  .timeline { display: flex; flex-direction: column; max-height: 480px; overflow-y: auto; }
   .tl-item { display: flex; gap: 12px; padding: 9px 8px; border-bottom: 1px solid var(--border); cursor: default; border-radius: 6px; transition: background 0.12s; }
   .tl-item:last-child { border-bottom: none; }
   .tl-item:hover { background: var(--surface2); }
@@ -141,7 +151,7 @@
 
   /* ROI */
   .roi-surface { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
-  .roi-col-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .roi-col-title { font-size: 12px; font-weight: 600; letter-spacing: -0.1px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
   .roi-col-title.red   { color: var(--red); }
   .roi-col-title.green { color: var(--trivial); }
   .cost-item { margin-bottom: 11px; }
@@ -166,7 +176,7 @@
   .roi-kpi-big { font-size: 36px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; }
   .roi-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 5px; }
   .waterfall-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
-  .waterfall-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 14px; }
+  .waterfall-title { font-size: 12px; font-weight: 600; letter-spacing: -0.1px; color: var(--text); margin-bottom: 14px; }
   .wf-row   { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
   .wf-label { font-size: 11px; width: 200px; flex-shrink: 0; color: var(--text); }
   .wf-bar-area { flex: 1; position: relative; height: 20px; }
@@ -188,8 +198,6 @@
   .dn { color: var(--red); }
 
   /* Personas / Forecast */
-  .forecast-divider { margin: 32px 0 24px; border: none; border-top: 1px solid var(--border); position: relative; }
-  .forecast-divider::after { content: 'TEAM FORECAST'; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); background: var(--bg); padding: 0 16px; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: var(--accent); }
   .persona-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
   .persona-card { background: var(--surface); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; }
   .persona-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
@@ -225,7 +233,7 @@
   .ft-val-good { color: var(--small); font-weight: 600; }
   .ft-val-opt { color: var(--trivial); font-weight: 600; }
   .growth-chart { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
-  .gc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 16px; }
+  .gc-title { font-size: 12px; font-weight: 600; letter-spacing: -0.1px; color: var(--text); margin-bottom: 16px; }
   .gc-legend { display: flex; gap: 16px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
   .gc-legend-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
   .gc-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
@@ -238,7 +246,7 @@
   .time-kpi-unit { font-size: 16px; font-weight: 600; letter-spacing: 0; }
   .time-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
   .rw-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
-  .rw-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 14px; }
+  .rw-title { font-size: 12px; font-weight: 600; letter-spacing: -0.1px; color: var(--text); margin-bottom: 14px; }
   .rw-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .rw-label { font-size: 11px; color: var(--text); width: 160px; flex-shrink: 0; }
   .rw-bars { flex: 1; display: flex; gap: 4px; align-items: center; }
@@ -297,22 +305,18 @@
     </div>
     <div class="header-right">
       <div class="badge live"><span class="pulse"></span> Live</div>
-      <div class="badge active" id="badge-days">&mdash;</div>
-      <div class="badge" id="badge-total">&mdash;</div>
     </div>
   </div>
   <div class="tab-nav">
-    <button class="tab-btn active" onclick="switchTab('home',this)">Home</button>
-    <button class="tab-btn" onclick="switchTab('performance',this)">Performance</button>
+    <button class="tab-btn active" onclick="switchTab('overview',this)">Overview</button>
     <button class="tab-btn" onclick="switchTab('team',this)">Team</button>
-    <button class="tab-btn" onclick="switchTab('roi',this)">Token ROI</button>
-    <button class="tab-btn" onclick="switchTab('time',this)">Time Saved</button>
-    <button class="tab-btn" onclick="switchTab('changelog',this)">Changelog</button>
+    <button class="tab-btn" onclick="switchTab('impact',this)">Impact</button>
+    <button class="tab-btn" onclick="switchTab('about',this)">About</button>
   </div>
 </div>
 
-<!-- HOME TAB -->
-<div id="tab-home" class="tab-pane active">
+<!-- ABOUT TAB -->
+<div id="tab-about" class="tab-pane">
 <div class="main">
   <div class="card" style="border-color: rgba(99,102,241,0.4); position: relative; overflow: hidden; margin-bottom: 20px;">
     <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg, var(--accent), var(--cyan));"></div>
@@ -335,9 +339,10 @@
       </div>
     </div>
   </div>
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-title">How It Works</div>
+  <div class="section-heading">Reference <span class="section-sub">workflow docs, setup, and philosophy</span></div>
+  <details class="section-collapse">
+    <summary>How It Works <span class="collapse-hint">5 steps</span></summary>
+    <div class="collapse-body">
       <div style="display:flex;flex-direction:column;gap:16px;">
         <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--trivial);">1</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Triage</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Every coding request is classified <em>before any tool call</em> into one of four tiers: Trivial, Small Scope, Complex, or Investigative.</div></div></div>
         <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(99,102,241,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--accent);">2</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Plan</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Small Scope and above produce a plan before code is written. Plans include goal, files, approach, risks with resolutions, and test strategy.</div></div></div>
@@ -346,8 +351,10 @@
         <div style="display:flex;gap:12px;align-items:flex-start;"><div style="width:28px;height:28px;border-radius:8px;background:rgba(168,85,247,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:800;color:var(--investigative);">5</div><div><div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Log</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Every task appends a structured JSON entry to <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">~/.pbt-log.jsonl</code>. The task is not complete until the log is written.</div></div></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">Triage Tiers</div>
+  </details>
+  <details class="section-collapse">
+    <summary>Triage Tiers <span class="collapse-hint">4 tiers</span></summary>
+    <div class="collapse-body">
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--trivial);"><div style="font-size:13px;font-weight:700;color:var(--trivial);margin-bottom:4px;">Trivial</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">1&ndash;2 files, no design decisions, obvious single implementation. Make the change directly, log, done.</div></div>
         <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--small);"><div style="font-size:13px;font-weight:700;color:var(--small);margin-bottom:4px;">Small Scope</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">1&ndash;3 files, straightforward logic in existing patterns, low risk. Abbreviated plan, then build and test.</div></div>
@@ -355,10 +362,10 @@
         <div style="background:var(--surface2);border-radius:8px;padding:14px;border-left:3px solid var(--investigative);"><div style="font-size:13px;font-weight:700;color:var(--investigative);margin-bottom:4px;">Investigative</div><div style="font-size:12px;color:var(--muted);line-height:1.5;">Root cause unknown, visual/layout bugs where rendering is the unknown, 2+ prior failed attempts. Spike first, then plan-build-test.</div></div>
       </div>
     </div>
-  </div>
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-title">Key Mechanisms</div>
+  </details>
+  <details class="section-collapse">
+    <summary>Key Mechanisms <span class="collapse-hint">5 mechanisms</span></summary>
+    <div class="collapse-body">
       <div style="display:flex;flex-direction:column;gap:12px;font-size:12px;line-height:1.6;">
         <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Retry Escalation</div><div style="color:var(--muted);">The log doubles as memory. Before triaging, PBT checks the last 3 log entries for prior attempts. One prior attempt bumps the tier one level. Two or more bumps to Complex (or Investigative for visual tasks).</div></div>
         <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Speculation Circuit Breaker</div><div style="color:var(--muted);">If the plan uses hedging language about runtime behavior, planning stops. The agent must ask the user or escalate to Investigative.</div></div>
@@ -367,8 +374,10 @@
         <div><div style="font-weight:600;color:var(--text);margin-bottom:2px;">Bugfix Cascade Rule</div><div style="color:var(--muted);">When the user reports an error, every fix must pass the build gate and runtime gate before reporting back. Two consecutive errors triggers escalation.</div></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">What Gets Logged</div>
+  </details>
+  <details class="section-collapse">
+    <summary>What Gets Logged <span class="collapse-hint">schema fields</span></summary>
+    <div class="collapse-body">
       <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px;">Every completed task appends a JSON line to <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">~/.pbt-log.jsonl</code> with a strict schema. This data powers all tabs in this dashboard.</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:6px;">Core Fields</div><div style="font-size:11px;color:var(--muted);line-height:1.7;"><code>ts</code> &middot; <code>project</code> &middot; <code>triage</code><br><code>task</code> &middot; <code>files_changed</code> &middot; <code>language</code></div></div>
@@ -378,42 +387,52 @@
       </div>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--dim);margin-bottom:8px;">About This Dashboard</div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.6;"><strong style="color:var(--dim)">Performance</strong> &mdash; Tier distribution, risk coverage, visual checks, escalation patterns, and a task timeline.<br><strong style="color:var(--dim)">Team</strong> &mdash; Per-user activity, heatmap, and tier preferences.<br><strong style="color:var(--dim)">Token ROI</strong> &mdash; Estimates the token cost of running PBT vs. the cost of catching the same issues in follow-up prompts.<br><strong style="color:var(--dim)">Time Saved</strong> &mdash; Models human time avoided through risk mitigation, visual catches, and escalations.<br><strong style="color:var(--dim)">Changelog</strong> &mdash; History of changes to the PBT skill itself.</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;"><strong style="color:var(--dim)">Overview</strong> &mdash; Live measured data: tier distribution, risk coverage, visual checks, escalations, and the task log.<br><strong style="color:var(--dim)">Team</strong> &mdash; Per-user activity, heatmap, and tier preferences.<br><strong style="color:var(--dim)">Impact</strong> &mdash; Modeled token ROI and time-saved projections (not measurements).<br><strong style="color:var(--dim)">About</strong> &mdash; Workflow reference docs plus the skill changelog below.</div>
       </div>
     </div>
-  </div>
-  <div class="card" style="margin-bottom:20px;">
-    <div class="card-title">Installation &amp; Setup</div>
+  </details>
+  <details class="section-collapse">
+    <summary>Installation &amp; Setup <span class="collapse-hint">3 steps</span></summary>
+    <div class="collapse-body">
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;">
       <div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;">1. Install the Skill</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">One line installs PBT as a Cursor skill into <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">~/.cursor/</code>. Idempotent &mdash; safe to re-run.</div><div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:#a5b4fc;line-height:1.6;word-break:break-all;">curl -fsSL https://raw.githubusercontent.com/NickVessella/pbt-installer/main/install.sh | bash</div></div>
       <div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;">2. Mode Gate (Cursor)</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">PBT only activates in Agent mode. Plan, Debug, and Ask modes skip the workflow entirely.</div><div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:#a5b4fc;line-height:1.6;">.cursor/rules/plan-build-test.mdc<br>&rarr; gates on Agent mode only</div></div>
       <div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;">3. Optional: Slack Alerts</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">Set <code style="font-size:10px;background:var(--surface2);padding:1px 4px;border-radius:3px;color:#a5b4fc">$PBT_SLACK_WEBHOOK</code> to receive a Slack message after each logged task.</div><div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:#a5b4fc;line-height:1.6;">export PBT_SLACK_WEBHOOK=https://hooks.slack.com/...</div></div>
     </div>
-  </div>
-  <div class="card" style="margin-bottom:0;">
-    <div class="card-title">Design Philosophy</div>
+    </div>
+  </details>
+  <details class="section-collapse">
+    <summary>Design Philosophy <span class="collapse-hint">3 principles</span></summary>
+    <div class="collapse-body">
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;font-size:12px;color:var(--muted);line-height:1.6;">
       <div><div style="font-weight:600;color:var(--text);margin-bottom:4px;">Classify from the request, not the code</div>Triage happens before any tool call. Reading code to reduce triage uncertainty is explicitly prohibited &mdash; a wrong tier is cheap to escalate, but a pre-triage tool call is an unrecoverable violation.</div>
       <div><div style="font-weight:600;color:var(--text);margin-bottom:4px;">Plans are contracts, not suggestions</div>The plan's file list is a checklist for the build phase. Deviations are allowed but must be noted. Skipping a planned file requires a written reason.</div>
       <div><div style="font-weight:600;color:var(--text);margin-bottom:4px;">Done means logged</div>A task is not complete until the structured log entry is written. No exceptions. This turns every session into a data source for future triage accuracy and workflow optimization.</div>
     </div>
+    </div>
+  </details>
+
+  <div class="section-heading">Skill Evolution Log <span class="section-sub">every update to SKILL.md, log-schema.md, hooks, or workflow process</span></div>
+  <div class="cl-filter-row">
+    <button class="filter-btn active" onclick="filterChangelog('all',this)">All</button>
+    <button class="filter-btn" onclick="filterChangelog('feature',this)">Feature</button>
+    <button class="filter-btn" onclick="filterChangelog('refactor',this)">Refactor</button>
+    <button class="filter-btn" onclick="filterChangelog('fix',this)">Fix</button>
+    <button class="filter-btn" onclick="filterChangelog('process',this)">Process</button>
+    <button class="filter-btn" onclick="filterChangelog('spike',this)">Spike-Driven</button>
   </div>
+  <div id="changelog-entries"></div>
 </div>
 </div>
 
-<!-- PERFORMANCE TAB -->
-<div id="tab-performance" class="tab-pane">
+<!-- OVERVIEW TAB -->
+<div id="tab-overview" class="tab-pane active">
 <div class="main">
   <div id="perf-kpi-section" class="kpi-row"></div>
   <div class="grid-3">
     <div class="card"><div class="card-title">Triage Distribution</div><div id="donut-container" class="donut-wrap"></div></div>
     <div class="card"><div class="card-title">Tasks by Project</div><div id="projects-chart" class="bar-chart"></div></div>
     <div class="card"><div class="card-title">Risk Management</div><div id="risk-section"></div></div>
-  </div>
-  <div class="grid-3">
-    <div class="card"><div class="card-title">Log Schema Health</div><div id="schema-health"></div></div>
-    <div class="card"><div class="card-title">Visual Verification</div><div id="visual-section"></div></div>
-    <div class="card"><div class="card-title">Tier Escalations &amp; Spikes</div><div id="escalation-section"></div></div>
   </div>
   <div class="card" style="margin-bottom:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -422,10 +441,27 @@
     </div>
     <div id="timeline" class="timeline"></div>
   </div>
-  <div class="grid-2">
-    <div class="card"><div class="card-title">Key Observations</div><div id="observations-section"></div></div>
-    <div class="card"><div class="card-title">Activity by Period</div><div id="activity-section"></div></div>
-  </div>
+  <div class="section-heading">Diagnostics &amp; details <span class="section-sub">secondary metrics, collapsed by default</span></div>
+  <details class="section-collapse">
+    <summary>Key Observations <span class="collapse-hint">auto-generated insights</span></summary>
+    <div class="collapse-body" id="observations-section"></div>
+  </details>
+  <details class="section-collapse">
+    <summary>Visual Verification <span class="collapse-hint">check &amp; catch rates</span></summary>
+    <div class="collapse-body" id="visual-section"></div>
+  </details>
+  <details class="section-collapse">
+    <summary>Tier Escalations &amp; Spikes <span class="collapse-hint">re-classified tasks</span></summary>
+    <div class="collapse-body" id="escalation-section"></div>
+  </details>
+  <details class="section-collapse">
+    <summary>Activity by Period <span class="collapse-hint">busiest days</span></summary>
+    <div class="collapse-body" id="activity-section"></div>
+  </details>
+  <details class="section-collapse">
+    <summary>Log Schema Health <span class="collapse-hint">data quality</span></summary>
+    <div class="collapse-body" id="schema-health"></div>
+  </details>
 </div>
 </div>
 
@@ -441,66 +477,74 @@
 </div>
 </div>
 
-<!-- TOKEN ROI TAB -->
-<div id="tab-roi" class="tab-pane">
+<!-- IMPACT TAB -->
+<div id="tab-impact" class="tab-pane">
 <div class="main">
-  <div class="disclaimer">&#9888; This is a model, not a measurement. Actual per-conversation token counts are unobserved. Estimates use file sizes (~4 bytes/token) and typical exchange patterns.</div>
-  <div class="scenario-row">
-    <span class="scenario-label">Risk materialization rate</span>
-    <div class="toggle-group">
-      <button class="toggle-btn" onclick="setScenario('pessimistic',this)">Pessimistic (25%)</button>
-      <button class="toggle-btn active" onclick="setScenario('base',this)">Base (40%)</button>
-      <button class="toggle-btn" onclick="setScenario('optimistic',this)">Optimistic (65%)</button>
+  <div class="impact-header">
+    <div class="toggle-group" id="impact-view-toggle">
+      <button class="toggle-btn active" onclick="setImpactView('tokens',this)">Tokens</button>
+      <button class="toggle-btn" onclick="setImpactView('time',this)">Time</button>
     </div>
-    <span style="font-size:10px;color:var(--muted)">= % of mitigated risks that would have become real bugs without PBT</span>
+    <span class="chip-modeled">Modeled</span>
+    <span style="font-size:11px;color:var(--muted)">Projections built from your measured task log &mdash; not direct measurements.</span>
   </div>
-  <div class="grid-2" style="align-items:start" id="roi-columns"></div>
-  <div class="roi-kpi-row" id="roi-summary-kpis"></div>
-  <div class="waterfall-section"><div class="waterfall-title">Token Waterfall &mdash; where every token goes</div><div id="waterfall"></div></div>
-  <div class="grid-2">
-    <div class="card"><div class="card-title">What tips the balance</div><div id="roi-insights"></div></div>
-    <div class="card"><div class="card-title">Untapped value (not modeled)</div><div id="roi-untapped"></div></div>
+
+  <!-- TOKENS VIEW -->
+  <div id="impact-view-tokens" class="impact-view active">
+    <div class="disclaimer">&#9888; This is a model, not a measurement. Actual per-conversation token counts are unobserved. Estimates use file sizes (~4 bytes/token) and typical exchange patterns.</div>
+    <div class="scenario-row">
+      <span class="scenario-label">Risk materialization rate</span>
+      <div class="toggle-group" id="scenario-toggle">
+        <button class="toggle-btn" onclick="setScenario('pessimistic',this)">Pessimistic (25%)</button>
+        <button class="toggle-btn active" onclick="setScenario('base',this)">Base (40%)</button>
+        <button class="toggle-btn" onclick="setScenario('optimistic',this)">Optimistic (65%)</button>
+      </div>
+      <span style="font-size:10px;color:var(--muted)">= % of mitigated risks that would have become real bugs without PBT</span>
+    </div>
+    <div class="roi-kpi-row" id="roi-summary-kpis"></div>
+    <div class="grid-2" style="align-items:start" id="roi-columns"></div>
+    <div class="waterfall-section"><div class="waterfall-title">Token Waterfall &mdash; where every token goes</div><div id="waterfall"></div></div>
+    <details class="section-collapse">
+      <summary>Insights <span class="collapse-hint">what tips the balance &middot; untapped value</span></summary>
+      <div class="collapse-body">
+        <div class="grid-2" style="margin-bottom:0">
+          <div><div class="card-title">What tips the balance</div><div id="roi-insights"></div></div>
+          <div><div class="card-title">Untapped value (not modeled)</div><div id="roi-untapped"></div></div>
+        </div>
+      </div>
+    </details>
+    <details class="section-collapse">
+      <summary>Team Forecast <span class="collapse-hint">personas &middot; 30-designer projection</span></summary>
+      <div class="collapse-body">
+        <div id="roi-personas" class="persona-grid"></div>
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px">30 Designers &mdash; Token Impact Forecast</div>
+        <div id="roi-forecast-table"></div>
+        <div id="roi-growth-chart" class="growth-chart"></div>
+        <div id="roi-swing"></div>
+      </div>
+    </details>
   </div>
-  <hr class="forecast-divider">
-  <div id="roi-personas" class="persona-grid"></div>
-  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--muted);margin-bottom:10px">30 Designers &mdash; Token Impact Forecast</div>
-  <div id="roi-forecast-table"></div>
-  <div id="roi-growth-chart" class="growth-chart"></div>
-  <div id="roi-swing"></div>
+
+  <!-- TIME VIEW -->
+  <div id="impact-view-time" class="impact-view">
+    <div class="disclaimer">&#9201; All time estimates use <strong>20 minutes per rework cycle</strong> &mdash; the designer time spent reviewing, re-prompting, waiting, and re-reviewing when AI output is wrong.</div>
+    <div id="time-hero-kpis" class="time-kpi-row"></div>
+    <div id="time-rework-waterfall"></div>
+    <details class="section-collapse">
+      <summary>Team Forecast <span class="collapse-hint">personas &middot; 30-designer projection</span></summary>
+      <div class="collapse-body">
+        <div id="time-personas" class="persona-grid"></div>
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px">30 Designers &mdash; Time Impact Forecast</div>
+        <div id="time-forecast-table"></div>
+        <div id="time-growth-chart" class="growth-chart"></div>
+        <div id="time-summary"></div>
+      </div>
+    </details>
+  </div>
 </div>
 </div>
 
-<!-- TIME SAVED TAB -->
-<div id="tab-time" class="tab-pane">
-<div class="main">
-  <div class="disclaimer">&#9201; All time estimates use <strong>20 minutes per rework cycle</strong> &mdash; the designer time spent reviewing, re-prompting, waiting, and re-reviewing when AI output is wrong.</div>
-  <div id="time-hero-kpis" class="time-kpi-row"></div>
-  <div id="time-personas" class="persona-grid"></div>
-  <div id="time-rework-waterfall"></div>
-  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--muted);margin-bottom:10px">30 Designers &mdash; Time Impact Forecast</div>
-  <div id="time-forecast-table"></div>
-  <div id="time-growth-chart" class="growth-chart"></div>
-  <div id="time-summary"></div>
-</div>
-</div>
-
-<!-- CHANGELOG TAB -->
-<div id="tab-changelog" class="tab-pane">
-<div class="main">
-  <div style="margin-bottom:18px"><h2 style="font-size:16px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px">Skill Evolution Log</h2><p style="font-size:11px;color:var(--muted)">Every update to SKILL.md, log-schema.md, hooks, or workflow process &mdash; with rationale and projected impact.</p></div>
-  <div class="cl-filter-row">
-    <button class="filter-btn active" onclick="filterChangelog('all',this)">All</button>
-    <button class="filter-btn" onclick="filterChangelog('feature',this)">Feature</button>
-    <button class="filter-btn" onclick="filterChangelog('refactor',this)">Refactor</button>
-    <button class="filter-btn" onclick="filterChangelog('fix',this)">Fix</button>
-    <button class="filter-btn" onclick="filterChangelog('process',this)">Process</button>
-    <button class="filter-btn" onclick="filterChangelog('spike',this)">Spike-Driven</button>
-  </div>
-  <div id="changelog-entries"></div>
-</div>
-</div>
-
-<div class="footer" id="footer">Data source: Vercel Blob &middot; Plan-Build-Test Live Dashboard &middot; Auto-refreshes every 60s &middot; UI rev: team-layout-2026-04-15</div>
+<div class="footer" id="footer">Data source: Vercel Blob &middot; Plan-Build-Test Live Dashboard &middot; Auto-refreshes every 60s &middot; UI rev: ia-redesign-2026-07-09</div>
 
 <script>
 const TIER_COLORS = { 'Trivial':'#10b981','Small Scope':'#3b82f6','Complex':'#f59e0b','Investigative':'#a855f7','Unknown':'#64748b' };
@@ -514,6 +558,20 @@ function switchTab(id, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + id).classList.add('active');
   btn.classList.add('active');
+}
+
+function setImpactView(view, btn) {
+  btn.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.impact-view').forEach(v => v.classList.remove('active'));
+  document.getElementById('impact-view-' + view).classList.add('active');
+}
+
+/* Null-safe innerHTML setter: a missing container logs instead of halting init() */
+function setHTML(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+  else console.warn('Missing container: #' + id);
 }
 
 function formatDate(ts) {
@@ -912,6 +970,26 @@ function renderROIInsights() {
   </div>`;
 }
 
+/* Shared persona-card renderer for the Impact tab (Tokens and Time views) */
+function renderPersonas(containerId, personas) {
+  setHTML(containerId, personas.map(p => `
+    <div class="persona-card ${p.cls}">
+      <div class="persona-header"><div class="persona-avatar">${p.avatar}</div><div><div class="persona-name">${p.name}</div><div class="persona-sub">${p.sub}</div></div></div>
+      <div class="persona-desc">${p.desc}</div>
+      <div class="persona-metrics">
+        ${p.rows.map(r => `<div class="pm-row"><span class="pm-label">${r.label}</span><span class="pm-val" style="color:${r.color}">${r.val}</span></div>`).join('')}
+        <div class="pm-bar"><div class="pm-bar-fill" style="width:${p.barPct}%;background:${p.barColor}"></div></div>
+        <div class="pm-row" style="margin-top:4px"><span class="pm-label">${p.footer.label}</span><span class="pm-val" style="color:${p.footer.color}">${p.footer.val}</span></div>
+      </div>
+    </div>`).join(''));
+}
+
+const PERSONA_BASE = {
+  cowboy: { cls: 'bad', avatar: '\u{1F920}', name: 'The Cowboy' },
+  practitioner: { cls: 'good', avatar: '\u{1F3AF}', name: 'The Practitioner' },
+  architect: { cls: 'optimized', avatar: '\u{1F3D7}\uFE0F', name: 'The Architect' }
+};
+
 function renderROIPersonas() {
   const s = STATS, r = computeROI('base');
   const overheadPerTask = s.total > 0 ? Math.round(r.overhead / s.total) : 0;
@@ -919,10 +997,32 @@ function renderROIPersonas() {
   const netPerTask = savingsPerTask - overheadPerTask;
   const cowboyWaste = s.total > 0 ? Math.round((r.savings * 1.15) / s.total) : 3622;
   const tpw = s.tasksPerWeek || 25;
-  document.getElementById('roi-personas').innerHTML = `
-    <div class="persona-card bad"><div class="persona-header"><div class="persona-avatar">&#x1F920;</div><div><div class="persona-name">The Cowboy</div><div class="persona-sub">No structure, pure improvisation</div></div></div><div class="persona-desc">Skips planning, goes straight to code. No risk analysis, no visual verification, no spikes. When something breaks, starts over from scratch.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Tasks / week</span><span class="pm-val" style="color:var(--red)">~${Math.round(tpw*0.72)}</span></div><div class="pm-row"><span class="pm-label">Net tokens / task</span><span class="pm-val" style="color:var(--red)">\u2212${fmtFull(cowboyWaste)}</span></div><div class="pm-row"><span class="pm-label">Rework rate</span><span class="pm-val" style="color:var(--red)">~30%</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:0%;background:var(--red)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Weekly impact</span><span class="pm-val" style="color:var(--red)">\u2212${fmt(cowboyWaste*Math.round(tpw*0.72))} wasted</span></div></div></div>
-    <div class="persona-card good"><div class="persona-header"><div class="persona-avatar">&#x1F3AF;</div><div><div class="persona-name">The Practitioner</div><div class="persona-sub">Your current baseline \u2014 measured data</div></div></div><div class="persona-desc">Follows PBT consistently: plans before building, identifies risks on Complex tasks, verifies visually, uses spikes when stuck.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Tasks / week</span><span class="pm-val" style="color:var(--small)">~${tpw}</span></div><div class="pm-row"><span class="pm-label">Net tokens / task</span><span class="pm-val" style="color:var(--trivial)">+${fmtFull(netPerTask)}</span></div><div class="pm-row"><span class="pm-label">Rework rate</span><span class="pm-val" style="color:var(--small)">~${s.total>0?(s.escalated/s.total*100).toFixed(1):'4.6'}%</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:65%;background:var(--small)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Weekly impact</span><span class="pm-val" style="color:var(--trivial)">+${fmt(netPerTask*tpw)} saved</span></div></div></div>
-    <div class="persona-card optimized"><div class="persona-header"><div class="persona-avatar">&#x1F3D7;&#xFE0F;</div><div><div class="persona-name">The Architect</div><div class="persona-sub">PBT + all optimizations applied</div></div></div><div class="persona-desc">PBT with schema inlined (\u2212860 tok/task), writes tests (catches regressions), higher risk identification rate. Fewer rework cycles.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Tasks / week</span><span class="pm-val" style="color:var(--trivial)">~${Math.round(tpw*1.12)}</span></div><div class="pm-row"><span class="pm-label">Net tokens / task</span><span class="pm-val" style="color:var(--trivial)">+${fmtFull(netPerTask+860+265)}</span></div><div class="pm-row"><span class="pm-label">Rework rate</span><span class="pm-val" style="color:var(--trivial)">~2%</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:100%;background:var(--trivial)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Weekly impact</span><span class="pm-val" style="color:var(--trivial)">+${fmt((netPerTask+860+265)*Math.round(tpw*1.12))} saved</span></div></div></div>`;
+  renderPersonas('roi-personas', [
+    { ...PERSONA_BASE.cowboy, sub: 'No structure, pure improvisation',
+      desc: 'Skips planning, goes straight to code. No risk analysis, no visual verification, no spikes. When something breaks, starts over from scratch.',
+      rows: [
+        { label: 'Tasks / week', val: `~${Math.round(tpw*0.72)}`, color: 'var(--red)' },
+        { label: 'Net tokens / task', val: `\u2212${fmtFull(cowboyWaste)}`, color: 'var(--red)' },
+        { label: 'Rework rate', val: '~30%', color: 'var(--red)' }
+      ], barPct: 0, barColor: 'var(--red)',
+      footer: { label: 'Weekly impact', val: `\u2212${fmt(cowboyWaste*Math.round(tpw*0.72))} wasted`, color: 'var(--red)' } },
+    { ...PERSONA_BASE.practitioner, sub: 'Your current baseline \u2014 measured data',
+      desc: 'Follows PBT consistently: plans before building, identifies risks on Complex tasks, verifies visually, uses spikes when stuck.',
+      rows: [
+        { label: 'Tasks / week', val: `~${tpw}`, color: 'var(--small)' },
+        { label: 'Net tokens / task', val: `+${fmtFull(netPerTask)}`, color: 'var(--trivial)' },
+        { label: 'Rework rate', val: `~${s.total>0?(s.escalated/s.total*100).toFixed(1):'4.6'}%`, color: 'var(--small)' }
+      ], barPct: 65, barColor: 'var(--small)',
+      footer: { label: 'Weekly impact', val: `+${fmt(netPerTask*tpw)} saved`, color: 'var(--trivial)' } },
+    { ...PERSONA_BASE.architect, sub: 'PBT + all optimizations applied',
+      desc: 'PBT with schema inlined (\u2212860 tok/task), writes tests (catches regressions), higher risk identification rate. Fewer rework cycles.',
+      rows: [
+        { label: 'Tasks / week', val: `~${Math.round(tpw*1.12)}`, color: 'var(--trivial)' },
+        { label: 'Net tokens / task', val: `+${fmtFull(netPerTask+860+265)}`, color: 'var(--trivial)' },
+        { label: 'Rework rate', val: '~2%', color: 'var(--trivial)' }
+      ], barPct: 100, barColor: 'var(--trivial)',
+      footer: { label: 'Weekly impact', val: `+${fmt((netPerTask+860+265)*Math.round(tpw*1.12))} saved`, color: 'var(--trivial)' } }
+  ]);
 }
 
 function renderROIForecast() {
@@ -950,7 +1050,7 @@ function renderROIForecast() {
 }
 
 function setScenario(scenario, btn) {
-  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderROI(scenario);
 }
@@ -977,10 +1077,30 @@ function renderTimeSaved() {
     <div class="time-kpi" style="border-color:rgba(16,185,129,0.3)"><div class="time-kpi-label">Team Hours / Month</div><div class="time-kpi-big">${Math.round(teamMonthly)}<span class="time-kpi-unit"> hrs</span></div><div class="time-kpi-sub">30 designers at your current rate</div></div>
     <div class="time-kpi" style="border-color:rgba(16,185,129,0.3)"><div class="time-kpi-label">FTE Equivalent / Year</div><div class="time-kpi-big">${fte.toFixed(1)}<span class="time-kpi-unit"> designers</span></div><div class="time-kpi-sub">of productivity recovered from rework</div></div>`;
 
-  document.getElementById('time-personas').innerHTML = `
-    <div class="persona-card bad"><div class="persona-header"><div class="persona-avatar">&#x1F920;</div><div><div class="persona-name">The Cowboy</div><div class="persona-sub">No structure \u2014 rework is the norm</div></div></div><div class="persona-desc">Every bug, every visual misfire, every underscoped task hits the designer as a rework cycle. No early interception.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Rework cycles / task</span><span class="pm-val" style="color:var(--red)">${cowCPT}</span></div><div class="pm-row"><span class="pm-label">Hours lost / week</span><span class="pm-val" style="color:var(--red)">${cowWeekHrs.toFixed(1)} hrs</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:100%;background:var(--red)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Annual waste (\u00d730)</span><span class="pm-val" style="color:var(--red)">${fmtFull(Math.round(cowWeekHrs*30*52))} hrs</span></div></div></div>
-    <div class="persona-card good"><div class="persona-header"><div class="persona-avatar">&#x1F3AF;</div><div><div class="persona-name">The Practitioner</div><div class="persona-sub">Your measured baseline</div></div></div><div class="persona-desc">PBT intercepts risks, visual bugs, and scope issues before they reach the designer. Only the ${(escRate*100).toFixed(1)}% escalation residual causes actual rework.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Rework cycles / task</span><span class="pm-val" style="color:var(--small)">${pracCPT.toFixed(2)}</span></div><div class="pm-row"><span class="pm-label">Hours lost / week</span><span class="pm-val" style="color:var(--trivial)">${pracWeekHrs < 1 ? Math.round(pracWeekHrs*60)+' min' : pracWeekHrs.toFixed(1)+' hrs'}</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:${(pracCPT/cowCPT*100).toFixed(0)}%;background:var(--small)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Annual savings (\u00d730)</span><span class="pm-val" style="color:var(--trivial)">${fmtFull(Math.round(savedVsCow*30*52))} hrs</span></div></div></div>
-    <div class="persona-card optimized"><div class="persona-header"><div class="persona-avatar">&#x1F3D7;&#xFE0F;</div><div><div class="persona-name">The Architect</div><div class="persona-sub">PBT + all optimizations</div></div></div><div class="persona-desc">Schema inlined, tests written, higher risk identification. Rework rate drops to ~2%.</div><div class="persona-metrics"><div class="pm-row"><span class="pm-label">Rework cycles / task</span><span class="pm-val" style="color:var(--trivial)">${archCPT}</span></div><div class="pm-row"><span class="pm-label">Hours lost / week</span><span class="pm-val" style="color:var(--trivial)">${archWeekHrs < 1 ? Math.round(archWeekHrs*60)+' min' : archWeekHrs.toFixed(1)+' hrs'}</span></div><div class="pm-bar"><div class="pm-bar-fill" style="width:${(archCPT/cowCPT*100).toFixed(0)}%;background:var(--trivial)"></div></div><div class="pm-row" style="margin-top:4px"><span class="pm-label">Annual savings (\u00d730)</span><span class="pm-val" style="color:var(--trivial)">${fmtFull(Math.round((cowWeekHrs-archWeekHrs)*30*52))} hrs</span></div></div></div>`;
+  const fmtHrs = h => h < 1 ? Math.round(h*60)+' min' : h.toFixed(1)+' hrs';
+  renderPersonas('time-personas', [
+    { ...PERSONA_BASE.cowboy, sub: 'No structure \u2014 rework is the norm',
+      desc: 'Every bug, every visual misfire, every underscoped task hits the designer as a rework cycle. No early interception.',
+      rows: [
+        { label: 'Rework cycles / task', val: `${cowCPT}`, color: 'var(--red)' },
+        { label: 'Hours lost / week', val: `${cowWeekHrs.toFixed(1)} hrs`, color: 'var(--red)' }
+      ], barPct: 100, barColor: 'var(--red)',
+      footer: { label: 'Annual waste (\u00d730)', val: `${fmtFull(Math.round(cowWeekHrs*30*52))} hrs`, color: 'var(--red)' } },
+    { ...PERSONA_BASE.practitioner, sub: 'Your measured baseline',
+      desc: `PBT intercepts risks, visual bugs, and scope issues before they reach the designer. Only the ${(escRate*100).toFixed(1)}% escalation residual causes actual rework.`,
+      rows: [
+        { label: 'Rework cycles / task', val: pracCPT.toFixed(2), color: 'var(--small)' },
+        { label: 'Hours lost / week', val: fmtHrs(pracWeekHrs), color: 'var(--trivial)' }
+      ], barPct: Number((pracCPT/cowCPT*100).toFixed(0)), barColor: 'var(--small)',
+      footer: { label: 'Annual savings (\u00d730)', val: `${fmtFull(Math.round(savedVsCow*30*52))} hrs`, color: 'var(--trivial)' } },
+    { ...PERSONA_BASE.architect, sub: 'PBT + all optimizations',
+      desc: 'Schema inlined, tests written, higher risk identification. Rework rate drops to ~2%.',
+      rows: [
+        { label: 'Rework cycles / task', val: `${archCPT}`, color: 'var(--trivial)' },
+        { label: 'Hours lost / week', val: fmtHrs(archWeekHrs), color: 'var(--trivial)' }
+      ], barPct: Number((archCPT/cowCPT*100).toFixed(0)), barColor: 'var(--trivial)',
+      footer: { label: 'Annual savings (\u00d730)', val: `${fmtFull(Math.round((cowWeekHrs-archWeekHrs)*30*52))} hrs`, color: 'var(--trivial)' } }
+  ]);
 
   const maxCyc = Math.max(riskBugs, s.visualIssues, blindRetries, s.planDeviations, s.escalated, 1);
   document.getElementById('time-rework-waterfall').innerHTML = `<div class="rw-card"><div class="rw-title">What PBT Intercepts \u2014 Rework Cycles Avoided (per ${s.total} tasks)</div>
@@ -1063,9 +1183,7 @@ async function init() {
   STATS = computeStats(data);
   const s = STATS;
 
-  document.getElementById('header-sub').textContent = `Live Dashboard \u2014 ${s.total} tasks \u00b7 ${s.users.length} user${s.users.length!==1?'s':''} \u00b7 ${s.projects.length} projects`;
-  document.getElementById('badge-days').textContent = `~${s.days} days active`;
-  document.getElementById('badge-total').textContent = `${s.total} tasks`;
+  document.getElementById('header-sub').textContent = `Live Dashboard \u2014 ${s.total} tasks \u00b7 ${s.users.length} user${s.users.length!==1?'s':''} \u00b7 ${s.projects.length} projects \u00b7 ~${s.days} days active`;
 
   renderPerfKPIs(s);
   renderDonut(s.tiers, s.total);
