@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 LOG_FILE = Path.home() / ".pbt-log.jsonl"
+QUARANTINE_FILE = Path.home() / ".pbt-log-quarantine.jsonl"
 
 DASHBOARD_URL = os.environ.get(
     "PBT_DASHBOARD_URL", "https://pbt-dashboard.vercel.app"
@@ -450,6 +451,22 @@ def check_thresholds(entries):
     return {"thresholds": thresholds, "ok": not any_flagged}
 
 
+def check_quarantine():
+    """Count lines in ~/.pbt-log-quarantine.jsonl if present."""
+    if not QUARANTINE_FILE.exists():
+        return {"path": str(QUARANTINE_FILE), "exists": False, "quarantine_count": 0}
+    try:
+        count = sum(1 for line in QUARANTINE_FILE.read_text().splitlines() if line.strip())
+    except OSError as exc:
+        return {
+            "path": str(QUARANTINE_FILE),
+            "exists": True,
+            "quarantine_count": 0,
+            "error": str(exc),
+        }
+    return {"path": str(QUARANTINE_FILE), "exists": True, "quarantine_count": count}
+
+
 def run_audit(local_only=False, remote_only=False, verbose=False):
     """Run the full audit and return structured report."""
     report = {
@@ -467,6 +484,9 @@ def run_audit(local_only=False, remote_only=False, verbose=False):
             report["warnings_found"] = 0
             report["legacy_fields_found"] = 0
             report["note"] = f"Remote fetch failed: {remote_error}"
+            quarantine = check_quarantine()
+            report["quarantine"] = quarantine
+            report["quarantine_count"] = quarantine.get("quarantine_count", 0)
             return report
 
         for i, entry in enumerate(remote_entries):
@@ -557,6 +577,14 @@ def run_audit(local_only=False, remote_only=False, verbose=False):
     report["warnings_found"] = warning_count
     report["legacy_fields_found"] = legacy_count
 
+    quarantine = check_quarantine()
+    report["quarantine"] = quarantine
+    qcount = quarantine.get("quarantine_count", 0)
+    report["quarantine_count"] = qcount
+    if qcount > 0:
+        warning_count += 1
+        report["warnings_found"] = warning_count
+
     if issues == 0 and warning_count == 0:
         report["summary"] = "VERIFIED"
     elif issues == 0 and warning_count > 0:
@@ -588,6 +616,12 @@ def print_human_summary(report):
 
     ev = report.get("entry_validation", {})
     print(f"\n  Schema:     {ev.get('errors', 0)} errors, {ev.get('warnings', 0)} warnings, {ev.get('legacy_fields', 0)} legacy fields")
+
+    qcount = report.get("quarantine_count", 0)
+    if qcount > 0:
+        print(f"  Quarantine: {qcount} line(s) in ~/.pbt-log-quarantine.jsonl (rejected by pbt-log.sh gate)")
+    else:
+        print("  Quarantine: empty / absent")
 
     arith = report.get("arithmetic", {})
     if arith.get("ok"):

@@ -1,0 +1,5 @@
+{
+  "name": "plan-build-test",
+  "version": "1.0.0",
+  "description": "Plan-Build-Test workflow for Claude Code — triage, plan, build, test, and log to the shared PBT dashboard."
+}

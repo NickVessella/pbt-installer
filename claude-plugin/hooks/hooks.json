@@ -1,0 +1,17 @@
+{
+  "description": "PBT dashboard sync after each Claude Code turn",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["-lc", "$HOME/.pbt/bin/pbt-sync.sh"],
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
