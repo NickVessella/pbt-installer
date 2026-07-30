@@ -7,7 +7,7 @@
 #
 # Usage:
 #   bash install.sh
-#   curl -fsSL …/install.sh | bash
+#   curl -fsSL https://cdn.jsdelivr.net/gh/NickVessella/pbt-installer@main/install.sh | bash
 #   bash install.sh --with-claude | --all | --design-only | …
 #
 # Exclusive flags select hosts (multiple *-only combine).

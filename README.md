@@ -7,7 +7,7 @@ Live dashboard: <https://pbt-dashboard.vercel.app>
 ## Install (one command)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NickVessella/pbt-installer/main/install.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/NickVessella/pbt-installer@main/install.sh | bash
 # or from a clone:
 bash install.sh
 ```
