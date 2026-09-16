@@ -11,28 +11,50 @@
 set -uo pipefail
 
 export PBT_DASHBOARD_URL="${PBT_DASHBOARD_URL:-https://pbt-dashboard.vercel.app}"
-# Dashboard API token. Same resolution as the bypass below: env, then a local
-# file outside the repo. /api/log now refuses unauthenticated writes, so an
-# absent token means entries queue in ~/.pbt-log.jsonl and re-sync once it is
-# set — nothing is lost, but the dashboard will fall behind until then.
-if [ -z "${PBT_API_TOKEN:-}" ] && [ -r "$HOME/.pbt/api-token" ]; then
-  PBT_API_TOKEN="$(tr -d '[:space:]' < "$HOME/.pbt/api-token")"
-fi
-export PBT_API_TOKEN="${PBT_API_TOKEN:-}"
-# Vercel protection-bypass token. Never baked in as a literal: this repo is
-# published and served over a public CDN, so any default here is disclosed the
-# moment it is committed. Resolution order is env, then a local file outside
-# the repo. Absent is tolerated — sync just gets a 401 and retries later.
-if [ -z "${PBT_VERCEL_BYPASS:-}" ] && [ -r "$HOME/.pbt/vercel-bypass" ]; then
-  PBT_VERCEL_BYPASS="$(tr -d '[:space:]' < "$HOME/.pbt/vercel-bypass")"
-fi
-export PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-}"
 
+# Paths first — resolve_secret() below writes to ERR_LOG, and `set -u` makes an
+# unbound reference fatal.
 LOG_FILE="$HOME/.pbt-log.jsonl"
 STATE_FILE="$HOME/.pbt-sync-state"
 ERR_LOG="$HOME/.pbt-sync-errors.log"
 LOCK_DIR="$HOME/.pbt-sync.lock"
 MAX_PER_RUN=200
+
+# Secrets: never baked in as literals. This repo is published and served over a
+# public CDN, so any default here is disclosed the moment it is committed.
+#
+# THE FILE WINS OVER THE ENVIRONMENT, which is the opposite of the usual
+# convention, and deliberately so. On 2026-09-16 a rotated bypass secret was
+# written to ~/.pbt/vercel-bypass and sync kept failing with 401 anyway,
+# because ~/.zprofile still exported the old dead value and the original
+# `[ -z "$VAR" ] && read-the-file` logic meant the file was never consulted.
+# The symptom — an edge 401 with no runtime log — looks nothing like its cause,
+# and it costs an hour to find. ~/.pbt/* is the managed, rotatable store; a
+# stale export is the known foot-gun. So the file takes precedence and the
+# disagreement is reported rather than silently resolved.
+resolve_secret() {
+  # $1 = var name, $2 = file path
+  local var="$1" file="$2" env_val file_val
+  eval "env_val=\${$var:-}"
+  file_val=""
+  [ -r "$file" ] && file_val="$(tr -d '[:space:]' < "$file")"
+
+  if [ -n "$file_val" ] && [ -n "$env_val" ] && [ "$file_val" != "$env_val" ]; then
+    printf '%s %s: environment and %s disagree; using the file. Remove the stale export.\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$var" "$file" >> "$ERR_LOG"
+    printf 'pbt-sync.sh: %s in the environment differs from %s — using the file. Remove the stale export (check ~/.zprofile, ~/.zshrc).\n' \
+      "$var" "$file" >&2
+  fi
+
+  if [ -n "$file_val" ]; then
+    eval "export $var=\"\$file_val\""
+  else
+    eval "export $var=\"\$env_val\""
+  fi
+}
+
+resolve_secret PBT_API_TOKEN     "$HOME/.pbt/api-token"
+resolve_secret PBT_VERCEL_BYPASS "$HOME/.pbt/vercel-bypass"
 
 [ -f "$LOG_FILE" ] || exit 0
 
