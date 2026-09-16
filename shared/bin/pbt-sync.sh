@@ -11,8 +11,22 @@
 set -uo pipefail
 
 export PBT_DASHBOARD_URL="${PBT_DASHBOARD_URL:-https://pbt-dashboard.vercel.app}"
+# Dashboard API token. Same resolution as the bypass below: env, then a local
+# file outside the repo. /api/log now refuses unauthenticated writes, so an
+# absent token means entries queue in ~/.pbt-log.jsonl and re-sync once it is
+# set — nothing is lost, but the dashboard will fall behind until then.
+if [ -z "${PBT_API_TOKEN:-}" ] && [ -r "$HOME/.pbt/api-token" ]; then
+  PBT_API_TOKEN="$(tr -d '[:space:]' < "$HOME/.pbt/api-token")"
+fi
 export PBT_API_TOKEN="${PBT_API_TOKEN:-}"
-export PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d}"
+# Vercel protection-bypass token. Never baked in as a literal: this repo is
+# published and served over a public CDN, so any default here is disclosed the
+# moment it is committed. Resolution order is env, then a local file outside
+# the repo. Absent is tolerated — sync just gets a 401 and retries later.
+if [ -z "${PBT_VERCEL_BYPASS:-}" ] && [ -r "$HOME/.pbt/vercel-bypass" ]; then
+  PBT_VERCEL_BYPASS="$(tr -d '[:space:]' < "$HOME/.pbt/vercel-bypass")"
+fi
+export PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-}"
 
 LOG_FILE="$HOME/.pbt-log.jsonl"
 STATE_FILE="$HOME/.pbt-sync-state"
@@ -21,6 +35,23 @@ LOCK_DIR="$HOME/.pbt-sync.lock"
 MAX_PER_RUN=200
 
 [ -f "$LOG_FILE" ] || exit 0
+
+# Self-healing lint before sync. Catches any entry that reached the log without
+# going through pbt-log.sh (four did between 2026-08-19 and 2026-09-15, each
+# surviving days until the Monday audit). Normalizing here also stops malformed
+# entries being POSTed and rejected — see the HTTP 400 skips for lines 837,
+# 1089, 1122 and 1144 in ~/.pbt-sync-errors.log.
+#
+# pbt-lint.py adjusts STATE_FILE itself if it has to remove a line, so it must
+# run BEFORE the cursor is read below. It always exits 0.
+# Findings go to ~/PBT/ rather than $HOME because that is the folder the
+# Monday audit has mounted — otherwise the audit cannot see what the lint
+# caught during the week.
+if [ -f "$HOME/.pbt/bin/pbt-lint.py" ]; then
+  PBT_LOG_FILE="$LOG_FILE" PBT_SYNC_STATE="$STATE_FILE" \
+  PBT_LINT_FINDINGS="$HOME/PBT/.pbt-lint-findings.jsonl" \
+    python3 -I "$HOME/.pbt/bin/pbt-lint.py" 2>/dev/null || true
+fi
 
 # Single-flight lock with stale reclaim (a killed worker must not wedge sync).
 if [ -d "$LOCK_DIR" ] && find "$LOCK_DIR" -maxdepth 0 -mmin +2 >/dev/null 2>&1; then
@@ -117,3 +148,4 @@ sys.stdout.write(json.dumps(e))
 ) >/dev/null 2>&1 &
 
 exit 0
+

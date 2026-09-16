@@ -1,8 +1,12 @@
 const { put } = require('@vercel/blob');
 const crypto = require('crypto');
 
-const REQUIRED_FIELDS = ['ts', 'triage', 'task'];
-const VALID_TIERS = ['Trivial', 'Small Scope', 'Complex', 'Investigative'];
+// Generated from shared/lib/pbt_schema.py — the single source of truth for the
+// 27-field contract. This handler used to carry its own
+// ['ts','triage','task'] check, which was the fourth hand-copied version of a
+// rule already replaced everywhere else; entries stored here were unvalidated
+// for the other 24 fields.
+const { normalize } = require('./_pbt-schema');
 
 function safeSegment(value, max = 64) {
   return String(value || 'unknown')
@@ -26,19 +30,17 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  const entry = req.body;
-  if (!entry || typeof entry !== 'object') {
-    return res.status(400).json({ error: 'Body must be a JSON object' });
+  // Normalize rather than reject: a 400 here used to mean the entry was lost
+  // outright (see the HTTP 400 skips in ~/.pbt-sync-errors.log for lines 837,
+  // 1089, 1122 and 1144 — four entries the local gate let through and the
+  // dashboard then dropped). Now only an unrecoverable entry is refused, and
+  // everything else is stored in canonical 27-field shape.
+  const { entry, changes, fatal } = normalize(req.body);
+  if (fatal.length) {
+    return res.status(400).json({ error: fatal.join('; ') });
   }
-
-  for (const field of REQUIRED_FIELDS) {
-    if (!entry[field]) {
-      return res.status(400).json({ error: `Missing required field: ${field}` });
-    }
-  }
-
-  if (!VALID_TIERS.includes(entry.triage)) {
-    return res.status(400).json({ error: `Invalid triage tier: ${entry.triage}` });
+  if (changes.length) {
+    console.log('normalized entry', entry.ts, changes.length, 'field(s):', changes.join('; '));
   }
 
   // Per-entry storage: each POST writes its own blob, eliminating the

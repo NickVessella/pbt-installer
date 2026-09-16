@@ -244,9 +244,17 @@ Read that file at the start of any coding task in this session if you haven't al
    - `P.B.T. Complex: full plan-build-test workflow`
    - `P.B.T. Investigative: spike first, then plan-build-test`
 
-2. **Last action** of every task is logging. Append a single-line JSON entry to `~/.pbt-log.jsonl`. The task is NOT complete until this is written.
+2. **Last action** of every task is logging. Pipe a single-line JSON entry to the log helper:
 
-3. **Log schema** lives at `~/.pbt/log-schema.md` — use the exact field names defined there (`ts`, `triage`, `task` — never aliases).
+   ```bash
+   echo '{"ts":"...","triage":"...","task":"..."}' | ~/.pbt/bin/pbt-log.sh
+   ```
+
+   **Never append to `~/.pbt-log.jsonl` directly** — not with `>>`, not with `printf`, not with an editor. The helper validates and normalizes all 27 fields; a direct write skips that and corrupts the log. A nonzero exit means the entry was quarantined rather than logged, and the reason is on stderr — say so instead of reporting a clean "done". The task is NOT complete until the entry is written.
+
+3. **Log schema** lives at `~/.pbt/log-schema.md` — use the exact field names defined there. All 27 fields belong in the entry, not just the required three. In particular `user`, `project` and `language` are routinely omitted and silently become `"unknown"`, which makes the task unattributable in reporting.
+
+4. **The triage label is response text, not data.** The `P.B.T. ` prefix belongs on the first line of your reply. The `triage` log field takes the bare value — `"Complex"`, never `"P.B.T. Complex"`. Copying the label verbatim into the field is what corrupted three entries in August 2026.
 RULE_EOF
 
   green "✓ Rule installed → ${file}"
@@ -566,7 +574,15 @@ After every completed task (including Trivial), log metrics.
 | "We're wrapping up the session, I'll log next time." | There is no next time. The log is the last action of this task, before anything else. |
 | "I summarized in my response — that's enough." | The response is for the user. The log entry is for the system. They serve different purposes. |
 
-**⛔ MANDATORY: Re-read the schema file before writing the log.** Do not write the log from memory. Field names have exact spellings — aliases (`timestamp`, `tier`, `goal`, `files_touched`) will corrupt the log. The log helper rejects aliases (nonzero exit → quarantine); use exact field names only.
+**⛔ MANDATORY: Re-read the schema file before writing the log.** Do not write the log from memory. Field names have exact spellings, and every one of the 27 fields belongs in the entry.
+
+The helper validates the **full schema** and repairs what it can rather than rejecting: a missing field gets its default, `files_changed: ["a.tsx","b.tsx"]` becomes `2`, an alias like `files_touched` is mapped to the real field, and an off-schema key such as `outcome` or `result` is moved into `notes` as a `[pbt-salvage]` block. It prints on stderr whatever it corrected.
+
+**Do not treat that as licence to be sloppy.** Normalization is a safety net for the log, not a substitute for a correct entry — a defaulted field records nothing, and a salvaged key means a real metric ended up as free text. If stderr shows corrections, the payload was wrong; fix it next time. Only four things are unrecoverable and quarantine the entry outright: unparseable JSON, no `ts`, no `task`, and a `triage` that isn't one of the four values.
+
+**`user`, `project` and `language` are the fields most often dropped**, and each defaults to `"unknown"`, which makes the task unattributable in every report. As of 2026-09-16, 17.9% of the log is unattributable for exactly this reason. Populate `user` from `$(whoami)`, `project` from the git repo root's basename, and `language` from the primary language of the change.
+
+**The triage label is response text, not data.** The `P.B.T. ` prefix belongs on the first line of your reply; the `triage` field takes the bare value (`"Complex"`, never `"P.B.T. Complex"`).
 
 ```bash
 cat ~/.pbt/log-schema.md
@@ -583,6 +599,8 @@ Then:
 3. If `$PBT_SLACK_WEBHOOK` is set, send to Slack per the reference file
 
 If the pipe or curl command fails, note the failure to the user and move on — a logging failure should not block the user. But you must *attempt* it before declaring done.
+
+**A nonzero exit from `pbt-log.sh` means the entry was quarantined, not logged.** The reason is on stderr. Tell the user, in one line, that the task is done but the log entry was rejected and why — do not report a clean "done". The entry is recoverable from `~/.pbt-log-quarantine.jsonl`.
 
 **Field reference** (how to populate non-obvious fields):
 - `tests_written`: count of new test cases (not files), 0 for Trivial tasks
@@ -787,7 +805,814 @@ else:
 # ──────────────────────────────────────────
 install_shared_pbt() {
   local dir="$PBT_DIR"
-  mkdir -p "${dir}/bin"
+  mkdir -p "${dir}/bin" "${dir}/lib"
+
+  # The schema module is the single source of truth for the 27-field contract.
+  # pbt-log.sh, pbt-lint.py, pbt_post.py and the Monday audit all import it, so
+  # that validation logic exists once rather than in four hand-copied places.
+  local schema_py="${dir}/lib/pbt_schema.py"
+  backup_if_exists "$schema_py"
+  cat > "$schema_py" <<'PBT_SCHEMA_PY_EOF'
+"""PBT log schema — the single source of truth.
+
+Consumed by:
+  - pbt-log.sh      (write-time gate: normalize-then-append)
+  - pbt-repair.py   (one-time history backfill)
+  - the Monday audit (read-time reporting)
+
+Canonical schema mirrors ~/.pbt/log-schema.md. If that file changes, change
+this one in the same commit — they are the same contract in two formats.
+
+Design principle: NORMALIZE, don't reject. A missing integer becomes 0; a
+`files_changed` that arrived as a list of filenames becomes the list's length
+with the filenames preserved. Only entries whose meaning cannot be recovered
+(unparseable JSON, no `ts`, no `task`, unrecognizable `triage`) go to
+quarantine. A write path that throws work away is a write path people bypass.
+
+Second principle: NEVER silently change a value. Every coercion, default-fill
+and dropped key is recorded — in the `changes` list for the caller, and for
+anything carrying data, in a machine-readable salvage block appended to
+`notes`. If a number in this log is wrong, the original is recoverable.
+"""
+
+import datetime as _dt
+import json as _json
+import re as _re
+
+TRIAGE_VALUES = ("Trivial", "Small Scope", "Complex", "Investigative")
+
+# Junk prefixes observed on `triage` in the wild (lines 1089/1122/1144,
+# 2026-08-19..25).
+TRIAGE_PREFIXES = ("p.b.t.", "pbt")
+
+# Legacy / short forms seen in Feb-May 2026 entries.
+TRIAGE_LEGACY = {
+    "quick": "Trivial",
+    "small": "Small Scope",
+    "investigate": "Investigative",
+    "investigation": "Investigative",
+}
+
+# Off-schema keys whose meaning is unambiguous. Mapped to the real field rather
+# than merely salvaged into notes, so the metric is not lost to free text.
+ALIAS_MAP = {
+    "timestamp": "ts",
+    "tier": "triage",
+    "files_touched": "files_changed",
+    "goal": "task",
+    "tests_added": "tests_written",
+    "escalation_count": None,   # known-but-unmappable: salvage only
+}
+
+SALVAGE_TAG = "[pbt-salvage]"
+
+# Fields whose absence is real information loss rather than routine omission.
+# When one of these gets defaulted, the entry records it so the audit can
+# measure emitter quality straight from the log.
+#
+# Why this exists: normalizing turned a loud failure into a quiet one. Before
+# the gate, a missing `project` was a schema violation the audit shouted about;
+# now it silently becomes "unknown" and the entry is technically valid. On
+# 2026-09-16, 3 of 7 new entries had no project, language or user, and nothing
+# in the report would have said so. Defaulting the routine fields
+# (`visual_issues_found=0` and friends) is not worth recording; losing
+# attribution is.
+ATTRIBUTION_FIELDS = ("user", "project", "language")
+
+INT, BOOL, STR, LIST = "int", "bool", "str", "list"
+
+# field -> (type, default, nullable)
+SCHEMA = {
+    "ts":                   (STR,  None,      False),
+    "user":                 (STR,  "unknown", False),
+    "project":              (STR,  "unknown", False),
+    "triage":               (STR,  None,      False),
+    "task":                 (STR,  None,      False),
+    "files_changed":        (INT,  0,         False),
+    "files_created":        (INT,  0,         False),
+    "tests_written":        (INT,  0,         False),
+    "tests_fixed":          (INT,  0,         False),
+    # Nullable on purpose. Defaulting an absent value to `true` would assert
+    # that tests passed for an entry that never said so — and the Monday audit
+    # computes pass rate from this field, so 92 backfilled `true`s would have
+    # silently inflated it. `null` means "not recorded" and is excluded from
+    # the rate, which is the honest reading.
+    "all_tests_passed":     (BOOL, None,      True),
+    "risks_identified":     (INT,  0,         False),
+    "risks_mitigated":      (INT,  0,         False),
+    "risks_out_of_scope":   (INT,  0,         False),
+    "risks_ask_user":       (INT,  0,         False),
+    "stopped_to_ask_user":  (BOOL, False,     False),
+    "plan_deviations":      (INT,  0,         False),
+    "pre_existing_issues":  (LIST, [],        False),
+    "language":             (STR,  "unknown", False),
+    "visual_check":         (BOOL, False,     False),
+    "visual_issues_found":  (INT,  0,         False),
+    "escalated":            (BOOL, False,     False),
+    "escalated_from":       (STR,  None,      True),
+    "spiked":               (BOOL, False,     False),
+    "spike_resolved":       (BOOL, False,     False),
+    "mid_plan_spike":       (BOOL, False,     False),
+    "duration_min":         (INT,  None,      True),
+    "notes":                (STR,  None,      True),
+}
+
+FIELD_ORDER = list(SCHEMA.keys())
+REQUIRED = ("ts", "triage", "task")
+
+# Sanity bounds. Outside these a value is almost certainly a units or parsing
+# error rather than a real measurement, so it is flagged (not silently fixed).
+MAX_COUNT = 100_000
+MAX_DURATION_MIN = 60 * 24 * 14  # two weeks
+
+_DATE_ONLY = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_BASIC_OFFSET = _re.compile(r"([+-])(\d{2})(\d{2})$")
+_FRACTIONAL = _re.compile(r"\.(\d{7,})")          # >6 fractional digits
+_LEADING_INT = _re.compile(r"^\s*(-?\d+)")
+_ISO_SHAPE = _re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?"
+    r"(Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
+# --------------------------------------------------------------------------
+# JSON loading that notices duplicate keys
+# --------------------------------------------------------------------------
+
+def loads(raw):
+    """json.loads, but duplicate keys are reported instead of silently lost.
+
+    Returns (obj, duplicates) where duplicates maps key -> [shadowed values].
+    """
+    dupes = {}
+
+    def hook(pairs):
+        seen = {}
+        for key, value in pairs:
+            if key in seen:
+                dupes.setdefault(key, []).append(seen[key])
+            seen[key] = value
+        return seen
+
+    return _json.loads(raw, object_pairs_hook=hook), dupes
+
+
+# --------------------------------------------------------------------------
+# timestamps
+# --------------------------------------------------------------------------
+
+def _parse_dt(text):
+    """Tolerant ISO-8601 parse. Returns datetime or None.
+
+    Independent of the host Python's `fromisoformat` capabilities so that
+    whether an entry is accepted never depends on which python3 is on PATH.
+    """
+    candidate = _BASIC_OFFSET.sub(r"\1\2:\3", text.strip())
+    # fromisoformat before 3.11 rejects 'Z' and >6 fractional digits.
+    candidate = _FRACTIONAL.sub(lambda m: "." + m.group(1)[:6], candidate)
+    normalized = candidate[:-1] + "+00:00" if candidate.endswith("Z") else candidate
+    try:
+        return _dt.datetime.fromisoformat(normalized)
+    except (ValueError, OverflowError):
+        return None
+
+
+def normalize_ts(value):
+    """Return (canonical_ts, note_or_None); canonical_ts is None if unusable."""
+    if not isinstance(value, str) or not value.strip():
+        return None, "ts is not a string: %r" % (value,)
+    raw = value.strip()
+
+    if _DATE_ONLY.match(raw):
+        return raw + "T00:00:00Z", "original ts was date-only: %s" % raw
+
+    if not _ISO_SHAPE.match(_BASIC_OFFSET.sub(r"\1\2:\3", raw)):
+        return None, "ts is not an ISO-8601 datetime: %r" % (value,)
+    if _parse_dt(raw) is None:
+        return None, "ts is not a valid datetime: %r" % (value,)
+
+    canonical = _BASIC_OFFSET.sub(r"\1\2:\3", raw)
+    return canonical, None
+
+
+def is_iso_datetime(value):
+    if not isinstance(value, str) or _DATE_ONLY.match(value.strip()):
+        return False
+    return normalize_ts(value)[0] is not None
+
+
+def ts_sort_key(value):
+    """Timezone-aware sort key; naive timestamps are assumed UTC."""
+    parsed = _parse_dt(value) if isinstance(value, str) else None
+    if parsed is None:
+        return _dt.datetime.min.replace(tzinfo=_dt.timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    return parsed
+
+
+# --------------------------------------------------------------------------
+# coercion
+# --------------------------------------------------------------------------
+
+def _coerce_int(value):
+    """Return (int_value, salvage_or_None) or (None, reason) if uncoercible."""
+    if isinstance(value, bool):
+        return int(value), None
+    if isinstance(value, int):
+        return value, None
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None, "non-finite number"
+        rounded = int(round(value))
+        return rounded, (None if rounded == value else value)
+    if isinstance(value, list):
+        items = [x for x in value if str(x).strip()]
+        return len(items), (items if items else None)
+    if isinstance(value, dict):
+        return None, value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return 0, None
+        try:
+            return int(raw), None
+        except ValueError:
+            pass
+        # A leading number with trailing prose: "12 files" -> 12.
+        match = _LEADING_INT.match(raw)
+        if match:
+            return int(match.group(1)), raw
+        # Filenames where a count was expected. A single path counts as 1 —
+        # returning 0 for "viteConfig.test.ts" would understate real work.
+        # Requires a path-ish signal so that prose ("about an hour") stays
+        # uncoercible rather than being silently counted as one of something.
+        if any(ch in raw for ch in ",/\\."):
+            parts = [p.strip() for p in _re.split(r"[,\n]", raw) if p.strip()]
+            if parts:
+                return len(parts), parts if len(parts) > 1 else raw
+        return None, raw
+    if value is None:
+        return 0, None
+    return None, value
+
+
+_TRUE = {"true", "yes", "1", "pass", "passed", "success", "ok"}
+_FALSE = {"false", "no", "0", "fail", "failed", "failure", "error"}
+
+
+def _coerce_bool(value):
+    """Return (bool, salvage_or_None) or (None, reason)."""
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value), None
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low in _TRUE:
+            return True, None
+        if low in _FALSE:
+            return False, None
+    return None, value
+
+
+def _coerce_triage(value):
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    if not isinstance(value, str):
+        return None
+    # Collapse internal whitespace, drop trailing punctuation.
+    raw = _re.sub(r"\s+", " ", value).strip().strip(".,;:!-").strip()
+    if not raw:
+        return None
+
+    lowered = raw.lower()
+    for prefix in TRIAGE_PREFIXES:
+        if lowered.startswith(prefix):
+            raw = raw[len(prefix):].strip().strip(".").strip()
+            lowered = raw.lower()
+            break
+
+    for valid in TRIAGE_VALUES:
+        if lowered == valid.lower():
+            return valid
+    if lowered in TRIAGE_LEGACY:
+        return TRIAGE_LEGACY[lowered]
+    return None
+
+
+# --------------------------------------------------------------------------
+# normalize
+# --------------------------------------------------------------------------
+
+def _append_salvage(notes, payload):
+    """Append a machine-readable salvage block to a notes string."""
+    if not payload:
+        return notes
+    try:
+        # Compact separators so this matches JSON.stringify byte-for-byte.
+        # The dashboard normalizes with a JS port generated from this module,
+        # and Python's default ", "/": " spacing made the two emit different
+        # `notes` strings for identical input — indistinguishable from a real
+        # divergence when comparing the two implementations.
+        blob = _json.dumps(payload, ensure_ascii=False, default=str,
+                           separators=(",", ":"))
+    except Exception:
+        blob = _json.dumps({"unserializable": str(payload)[:500]})
+    block = "%s %s" % (SALVAGE_TAG, blob)
+    return ("%s %s" % (notes, block)) if notes else block
+
+
+def has_salvage(entry):
+    return isinstance(entry.get("notes"), str) and SALVAGE_TAG in entry["notes"]
+
+
+def normalize(entry, duplicates=None):
+    """Normalize one parsed entry against the schema.
+
+    Returns (normalized_dict_or_None, changes, fatal_problems).
+    Non-empty fatal_problems means the entry must be quarantined.
+    """
+    changes, fatal, salvage = [], [], {}
+
+    if not isinstance(entry, dict):
+        return None, changes, ["body must be a JSON object"]
+
+    entry = dict(entry)
+
+    # --- fold known aliases onto their real fields first -------------------
+    for alias, target in ALIAS_MAP.items():
+        if alias not in entry:
+            continue
+        value = entry.pop(alias)
+        if target and target not in entry:
+            entry[target] = value
+            changes.append("alias %s -> %s" % (alias, target))
+        else:
+            salvage[alias] = value
+            changes.append("alias %s salvaged (%s already set)" % (alias, target))
+
+    if duplicates:
+        salvage["_duplicate_keys"] = duplicates
+        changes.append("duplicate JSON keys shadowed: %s" % sorted(duplicates))
+
+    # --- triage (fatal) ---------------------------------------------------
+    triage = _coerce_triage(entry.get("triage"))
+    if triage is None:
+        fatal.append("missing or unrecognizable triage: %r" % (entry.get("triage"),))
+    elif triage != entry.get("triage"):
+        changes.append("triage %r -> %r" % (entry.get("triage"), triage))
+        # Recorded on the entry, not just on stderr. The `P.B.T. ` prefix comes
+        # from the rules file's own mandate that the triage LABEL open every
+        # response; an agent reusing that label verbatim as the field value
+        # produces "P.B.T. Complex". Without this we cannot tell whether that
+        # instruction is still leaking into the data.
+        salvage["_triage_corrected_from"] = entry.get("triage")
+
+    if not entry.get("task") or not str(entry.get("task")).strip():
+        fatal.append("missing task")
+
+    if fatal:
+        return None, changes, fatal
+
+    # --- ts (fatal if unparseable) ----------------------------------------
+    ts_before = entry.get("ts")
+    canonical_ts, ts_note = normalize_ts(ts_before)
+    if canonical_ts is None:
+        return None, changes, [ts_note]
+    if canonical_ts != ts_before:
+        changes.append("ts %r -> %r" % (ts_before, canonical_ts))
+        entry["ts"] = canonical_ts
+    if ts_note:
+        # The ORIGINAL, captured before the replacement above. Reading
+        # entry["ts"] here recorded the already-promoted value, which
+        # round-tripped the very thing the marker exists to preserve.
+        salvage["ts_original"] = ts_before
+
+    # --- typed fields -----------------------------------------------------
+    out = {}
+    for field in FIELD_ORDER:
+        kind, default, nullable = SCHEMA[field]
+        blank_default = list(default) if isinstance(default, list) else default
+
+        if field == "triage":
+            out[field] = triage
+            continue
+        if field == "notes":
+            continue  # written last, after salvage is complete
+
+        if field not in entry:
+            out[field] = blank_default
+            changes.append("filled missing %s=%r" % (field, blank_default))
+            if field in ATTRIBUTION_FIELDS:
+                salvage.setdefault("_defaulted_attribution", []).append(field)
+            continue
+
+        value = entry[field]
+
+        if value is None:
+            if nullable:
+                out[field] = None
+            else:
+                out[field] = blank_default
+                changes.append("null %s -> %r" % (field, blank_default))
+                if field in ATTRIBUTION_FIELDS:
+                    salvage.setdefault("_defaulted_attribution", []).append(field)
+            continue
+
+        if kind == INT:
+            new, extra = _coerce_int(value)
+            if new is None:
+                out[field] = blank_default
+                salvage[field] = extra
+                changes.append("uncoercible %s (salvaged) -> %r" % (field, blank_default))
+            else:
+                if isinstance(value, bool) or not isinstance(value, int) or new != value:
+                    changes.append("%s %r -> %d" % (field, value, new))
+                out[field] = new
+                if extra is not None:
+                    salvage[field] = extra
+
+        elif kind == BOOL:
+            new, extra = _coerce_bool(value)
+            if new is None:
+                out[field] = blank_default
+                salvage[field] = extra
+                changes.append("uncoercible %s=%r (salvaged) -> %r"
+                               % (field, value, blank_default))
+            else:
+                if new is not value:
+                    changes.append("%s %r -> %r" % (field, value, new))
+                out[field] = new
+
+        elif kind == LIST:
+            if isinstance(value, list):
+                out[field] = value
+            elif isinstance(value, str) and value.strip():
+                out[field] = [value.strip()]
+                changes.append("%s str -> list" % field)
+            else:
+                out[field] = list(blank_default)
+                salvage[field] = value
+                changes.append("%s %r (salvaged) -> []" % (field, value))
+
+        else:  # STR
+            if isinstance(value, str):
+                out[field] = value
+            else:
+                out[field] = str(value)
+                salvage[field] = value
+                changes.append("%s %r -> str" % (field, value))
+
+    # --- unknown keys: preserve, never discard ----------------------------
+    unknown = [k for k in entry if k not in SCHEMA]
+    if unknown:
+        for key in sorted(unknown):
+            salvage[key] = entry[key]
+        changes.append("off-schema keys salvaged: %s" % sorted(unknown))
+
+    # --- notes last, carrying the salvage block ---------------------------
+    notes_value = entry.get("notes")
+    if notes_value is not None and not isinstance(notes_value, str):
+        salvage["notes_original"] = notes_value
+        notes_value = str(notes_value)
+        changes.append("notes coerced to str")
+    out["notes"] = _append_salvage(notes_value, salvage)
+
+    return {k: out[k] for k in FIELD_ORDER}, changes, []
+
+
+# --------------------------------------------------------------------------
+# read-only reporting (used by the Monday audit)
+# --------------------------------------------------------------------------
+
+def violations(entry):
+    """Report, rather than repair. The audit must tell the truth about disk."""
+    problems = []
+    if not isinstance(entry, dict):
+        return ["not a JSON object"]
+
+    for field in REQUIRED:
+        if not entry.get(field):
+            problems.append("missing required %s" % field)
+
+    if entry.get("ts") and not is_iso_datetime(entry.get("ts")):
+        problems.append("ts is not an ISO-8601 datetime: %r" % (entry.get("ts"),))
+
+    if entry.get("triage") not in TRIAGE_VALUES:
+        problems.append("invalid triage: %r" % (entry.get("triage"),))
+
+    for field in FIELD_ORDER:
+        if field not in entry:
+            problems.append("missing field %s" % field)
+            continue
+        kind, _default, nullable = SCHEMA[field]
+        value = entry[field]
+        if value is None:
+            if not nullable:
+                problems.append("%s is null" % field)
+            continue
+        if kind == INT and (isinstance(value, bool) or not isinstance(value, int)):
+            problems.append("%s is %s, expected int" % (field, type(value).__name__))
+        elif kind == BOOL and not isinstance(value, bool):
+            problems.append("%s is %s, expected bool" % (field, type(value).__name__))
+        elif kind == LIST and not isinstance(value, list):
+            problems.append("%s is %s, expected list" % (field, type(value).__name__))
+        elif kind == STR and not isinstance(value, str):
+            problems.append("%s is %s, expected str" % (field, type(value).__name__))
+
+    for key in entry:
+        if key not in SCHEMA:
+            problems.append("off-schema key: %s" % key)
+
+    problems.extend(implausible(entry))
+    return problems
+
+
+def salvage_payload(entry):
+    """Parse the [pbt-salvage] block(s) back out of `notes`. {} if absent.
+
+    Scans *every* occurrence of the tag and merges each one that decodes,
+    rather than trusting the first. Two cases make that necessary, and both
+    silently lost markers when this took the first match only:
+
+      * an entry can legitimately carry more than one block — the repair
+        appends a `ts_disambiguated_from` block after an existing one
+      * the tag can appear inside the author's own `notes` prose, in which
+        case the first match is not a JSON object at all and the real block
+        sits further along
+
+    Losing a block here would under-report the very emitter-quality signal
+    these markers exist to provide, so it fails toward finding them.
+    """
+    notes = entry.get("notes")
+    if not isinstance(notes, str) or SALVAGE_TAG not in notes:
+        return {}
+
+    merged = {}
+    decoder = _json.JSONDecoder()
+    position = notes.find(SALVAGE_TAG)
+    while position != -1:
+        blob = notes[position + len(SALVAGE_TAG):].lstrip()
+        try:
+            obj, _end = decoder.raw_decode(blob)
+            if isinstance(obj, dict):
+                merged.update(obj)
+        except ValueError:
+            pass
+        position = notes.find(SALVAGE_TAG, position + len(SALVAGE_TAG))
+    return merged
+
+
+def emitter_quality(entries):
+    """Measure how well the WRITE SIDE is behaving, not the log's validity.
+
+    The log is guaranteed schema-clean by the gate, so `violations()` will
+    report zero even when the emitter is producing near-empty payloads. This
+    is the companion metric: it counts what the gate had to paper over.
+
+    Returns a dict of counts plus the offending entries, for the audit's
+    Attribution Quality section.
+    """
+    total = 0
+    unattributed = []
+    salvaged = []
+    triage_corrected = []
+    defaulted_attribution = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        total += 1
+
+        if any(entry.get(f) == "unknown" for f in ATTRIBUTION_FIELDS):
+            unattributed.append(entry)
+
+        payload = salvage_payload(entry)
+        if payload:
+            salvaged.append(entry)
+        if "_triage_corrected_from" in payload:
+            triage_corrected.append((entry, payload["_triage_corrected_from"]))
+        if payload.get("_defaulted_attribution"):
+            defaulted_attribution.append((entry, payload["_defaulted_attribution"]))
+
+    def pct(n):
+        return round(100.0 * n / total, 1) if total else 0.0
+
+    return {
+        "total": total,
+        "unattributed": len(unattributed),
+        "unattributed_pct": pct(len(unattributed)),
+        "unattributed_entries": unattributed,
+        "salvaged": len(salvaged),
+        "salvaged_pct": pct(len(salvaged)),
+        "triage_corrected": triage_corrected,
+        "defaulted_attribution": defaulted_attribution,
+    }
+
+
+def implausible(entry):
+    """Values that are schema-valid but almost certainly wrong."""
+    notes = []
+    if not isinstance(entry, dict):
+        return notes
+    for field, (kind, _d, _n) in SCHEMA.items():
+        if kind != INT:
+            continue
+        value = entry.get(field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            continue
+        if value < 0:
+            notes.append("%s is negative (%d)" % (field, value))
+        elif field == "duration_min" and value > MAX_DURATION_MIN:
+            notes.append("duration_min implausibly large (%d)" % value)
+        elif field != "duration_min" and value > MAX_COUNT:
+            notes.append("%s implausibly large (%d)" % (field, value))
+    return notes
+PBT_SCHEMA_PY_EOF
+  green "✓ Shared schema module → ${schema_py}"
+  installed+=(".pbt/lib/pbt_schema.py")
+
+  # Self-healing lint: repairs anything that reached the log without going
+  # through pbt-log.sh. Invoked from pbt-sync.sh on the task-stop hook.
+  local lint_file="${dir}/bin/pbt-lint.py"
+  backup_if_exists "$lint_file"
+  cat > "$lint_file" <<'PBT_LINT_EOF'
+#!/usr/bin/env python3
+"""Self-healing lint for ~/.pbt-log.jsonl.
+
+Runs from the task-stop hook (via pbt-sync.sh), so an entry that bypassed
+pbt-log.sh is corrected within one task instead of surviving until Monday's
+audit. Between 2026-08-19 and 2026-09-15 four such entries reached the log and
+each one sat there for days.
+
+Behaviour:
+  * fixable entry  -> normalized in place, line count unchanged
+  * unparseable    -> moved to ~/.pbt-log-quarantine.jsonl and the line removed
+  * nothing wrong  -> exits silently having written nothing
+
+Two things this is careful about:
+
+1. `pbt-sync.sh` tracks dashboard progress with a LINE OFFSET in
+   ~/.pbt-sync-state. Removing a line shifts every offset after it, which
+   would make sync either re-post or skip entries. So removals are counted and
+   the cursor is decremented by however many fell at or before it. Normalizing
+   in place keeps the count stable and needs no adjustment.
+
+2. It never rewrites the log unless something actually changed, so the common
+   case costs one read.
+
+Exit status is always 0 — a lint failure must not break the user's task.
+"""
+
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("PBT_LIB_DIR", os.path.expanduser("~/.pbt/lib")))
+
+LOG = os.environ.get("PBT_LOG_FILE", os.path.expanduser("~/.pbt-log.jsonl"))
+QUARANTINE = os.environ.get(
+    "PBT_QUARANTINE_FILE", os.path.expanduser("~/.pbt-log-quarantine.jsonl")
+)
+STATE = os.environ.get("PBT_SYNC_STATE", os.path.expanduser("~/.pbt-sync-state"))
+FINDINGS = os.environ.get(
+    "PBT_LINT_FINDINGS", os.path.expanduser("~/.pbt-lint-findings.jsonl")
+)
+
+
+def main():
+    try:
+        import pbt_schema
+        from pbt_schema import normalize
+    except Exception:
+        return 0  # validator unavailable; never break the task
+
+    if not os.path.exists(LOG):
+        return 0
+
+    try:
+        with open(LOG, encoding="utf-8", errors="surrogatepass") as fh:
+            raw_lines = fh.read().splitlines()
+    except OSError:
+        return 0
+
+    kept = []
+    removed_indices = []
+    findings = []
+    dirty = False
+
+    for idx, raw in enumerate(raw_lines, 1):
+        stripped = raw.strip()
+        if not stripped:
+            removed_indices.append(idx)
+            dirty = True
+            continue
+
+        try:
+            entry, dupes = pbt_schema.loads(stripped)
+        except Exception as ex:
+            removed_indices.append(idx)
+            findings.append({"line": idx, "action": "quarantined",
+                             "reason": "parse_error: %s" % ex, "raw": stripped})
+            dirty = True
+            continue
+
+        clean, changes, fatal = normalize(entry, dupes)
+        if fatal:
+            removed_indices.append(idx)
+            findings.append({"line": idx, "action": "quarantined",
+                             "reason": "; ".join(fatal), "raw": stripped})
+            dirty = True
+            continue
+
+        rendered = json.dumps(clean, ensure_ascii=False)
+        if rendered != stripped:
+            dirty = True
+            if changes:
+                findings.append({"line": idx, "action": "normalized",
+                                 "changes": changes})
+        kept.append(rendered)
+
+    if not dirty:
+        return 0
+
+    # --- rewrite atomically ------------------------------------------------
+    tmp = LOG + ".lint-tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", errors="surrogatepass") as fh:
+            for line in kept:
+                fh.write(line + "\n")
+        os.replace(tmp, LOG)
+    except Exception:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return 0
+
+    # --- keep the dashboard sync cursor pointing at the same entry ---------
+    if removed_indices:
+        try:
+            cursor = int(open(STATE).read().strip())
+        except (OSError, ValueError):
+            cursor = None
+        if cursor is not None:
+            shift = sum(1 for i in removed_indices if i <= cursor)
+            if shift:
+                with open(STATE, "w") as fh:
+                    fh.write(str(max(0, cursor - shift)))
+
+    # --- record what happened, for Monday's audit -------------------------
+    quarantine_records = [f for f in findings if f["action"] == "quarantined"]
+    if quarantine_records:
+        try:
+            import datetime
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            with open(QUARANTINE, "a", encoding="utf-8") as fh:
+                for rec in quarantine_records:
+                    fh.write(json.dumps({
+                        "quarantined_at": stamp,
+                        "reason": rec["reason"],
+                        "source": "pbt-lint",
+                        "entry": {"_raw": rec["raw"]},
+                    }, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    if findings:
+        try:
+            import datetime
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            with open(FINDINGS, "a", encoding="utf-8") as fh:
+                for rec in findings:
+                    rec["at"] = stamp
+                    fh.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        except OSError:
+            pass
+        sys.stderr.write(
+            "pbt-lint: repaired %d log entr%s (%d quarantined); see %s\n"
+            % (len(findings), "y" if len(findings) == 1 else "ies",
+               len(quarantine_records), FINDINGS)
+        )
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)  # never break the user's task
+PBT_LINT_EOF
+  chmod +x "$lint_file"
+  green "✓ Self-healing log lint → ${lint_file}"
+  installed+=(".pbt/bin/pbt-lint.py")
 
   local schema_file="${dir}/log-schema.md"
   backup_if_exists "$schema_file"
@@ -838,61 +1663,101 @@ PBT_SCHEMA_EOF
 # Called by the agent via: echo '{"ts":"..."}' | ~/.pbt/bin/pbt-log.sh
 # Using a fixed-name script lets Cursor IDE allowlist it once.
 #
-# Validates required fields (ts, triage enum, task) before appending — mirrors
-# dashboard/api/log.js. Extra fields are allowed. Invalid or unparseable input
-# goes to ~/.pbt-log-quarantine.jsonl and the script exits nonzero.
+# CHANGED 2026-09-15: validation moved from a 3-field check (ts / triage / task)
+# to the full schema in ~/.pbt/lib/pbt_schema.py, and the behaviour changed from
+# reject-or-append to NORMALIZE-then-append.
+#
+# Rationale: the old gate accepted 114 of the 118 malformed entries that
+# accumulated in the log between Feb and Sep 2026, because it checked only three
+# fields and explicitly allowed extra fields. Missing fields, `files_changed` as
+# a list of filenames, and off-schema keys like `outcome` / `result` all passed
+# straight through. Normalizing at the choke point fixes the class of problem
+# rather than the instances.
+#
+# Entries are quarantined only when their meaning cannot be recovered
+# (unparseable JSON, no ts, no task, unrecognizable triage). Everything else is
+# repaired in place and appended, with the repairs reported on stderr so the
+# agent — and the human reading the transcript — can see what was corrected.
 
 set -uo pipefail
 
-LOG_FILE="$HOME/.pbt-log.jsonl"
-QUARANTINE_FILE="$HOME/.pbt-log-quarantine.jsonl"
+LOG_FILE="${PBT_LOG_FILE:-$HOME/.pbt-log.jsonl}"
+QUARANTINE_FILE="${PBT_QUARANTINE_FILE:-$HOME/.pbt-log-quarantine.jsonl}"
+LIB_DIR="${PBT_LIB_DIR:-$HOME/.pbt/lib}"
 
-read -r -t 5 line || true
-[ -n "${line:-}" ] || exit 0
+# Read ALL of stdin, not one line.
+#
+# The previous `read -r -t 5 line` had three data-loss bugs: pretty-printed
+# JSON lost every field but the first line; a caller slower than 5s had its
+# entry discarded with exit 0 and no trace at all; and a stall mid-write
+# truncated the payload silently. `cat` has no timeout and no line limit, so a
+# multi-line payload arrives whole and a slow writer blocks instead of
+# vanishing.
+line=$(cat)
+[ -n "$(printf '%s' "$line" | tr -d '[:space:]')" ] || exit 0
 
-# Validate with python3 (same availability assumption as pbt-stop.sh). Extra
-# fields pass through unchanged; only the required trio is checked.
-# Prints "OK" on stdout if valid; otherwise prints a reason and exits 1.
-reason=$(printf '%s' "$line" | python3 -c '
-import sys, json
+# Normalize: clean JSON on stdout, "FATAL:<reason>" on stdout if unrecoverable,
+# human-readable repair notes on stderr (which passes through to the caller).
+#
+# `python3 -I` runs isolated: it does NOT put the current working directory on
+# sys.path. Without it, a `pbt_schema.py` sitting in whatever repo the agent
+# happens to be working in would be imported instead of ours — arbitrary code
+# execution on every log write, and a trivial way to corrupt the log.
+normalized=$(printf '%s' "$line" | PBT_LIB_DIR="$LIB_DIR" python3 -I -c '
+import sys, os, json
+
+sys.path.insert(0, os.environ["PBT_LIB_DIR"])
 raw = sys.stdin.read()
-VALID = {"Trivial", "Small Scope", "Complex", "Investigative"}
+
 try:
-    e = json.loads(raw)
+    import pbt_schema
+    from pbt_schema import normalize
 except Exception as ex:
-    print("parse_error: " + str(ex))
-    sys.exit(1)
-if not isinstance(e, dict):
-    print("parse_error: body must be a JSON object")
-    sys.exit(1)
-problems = []
-if not e.get("ts"):
-    problems.append("missing ts")
-triage = e.get("triage")
-if not triage:
-    problems.append("missing triage")
-elif triage not in VALID:
-    problems.append("invalid triage: %r" % (triage,))
-if not e.get("task"):
-    problems.append("missing task")
-if problems:
-    print("; ".join(problems))
-    sys.exit(1)
-print("OK")
-' 2>/dev/null)
-rc=$?
+    # Never lose an entry because the validator is missing or broken. Degrade
+    # to the old behaviour and say so loudly.
+    sys.stderr.write("pbt-log.sh: validator unavailable (%s); appending unvalidated\n" % ex)
+    sys.stdout.write(raw)
+    sys.exit(0)
 
-if [ "$rc" -eq 0 ] && [ "$reason" = "OK" ]; then
-  printf '%s\n' "$line" >> "$LOG_FILE"
-  exit 0
-fi
+try:
+    entry, dupes = pbt_schema.loads(raw)
+except Exception as ex:
+    sys.stdout.write("FATAL:parse_error: %s" % ex)
+    sys.exit(0)
 
-# Invalid — quarantine. Never let the entry vanish with zero trace.
-fail_reason="${reason:-validation_failed}"
+clean, changes, fatal = normalize(entry, dupes)
+if fatal:
+    sys.stdout.write("FATAL:" + "; ".join(fatal))
+    sys.exit(0)
+if changes:
+    # Keep the report readable: list real corrections, summarize default-fills.
+    fills = [c for c in changes if c.startswith("filled missing ")]
+    fixes = [c for c in changes if not c.startswith("filled missing ")]
+    parts = []
+    if fixes:
+        parts.append("corrected: " + "; ".join(fixes))
+    if fills:
+        names = [c.split()[2].split("=")[0] for c in fills]
+        parts.append("defaulted %d absent field(s): %s" % (len(fills), ", ".join(names)))
+    sys.stderr.write("pbt-log.sh: " + " | ".join(parts) + "\n")
+sys.stdout.write(json.dumps(clean, ensure_ascii=False))
+')
+
+case "${normalized:-}" in
+  FATAL:*) fail_reason="${normalized#FATAL:}" ;;
+  "")      fail_reason="validation_failed" ;;
+  *)
+    printf '%s\n' "$normalized" >> "$LOG_FILE"
+    exit 0
+    ;;
+esac
+
+# Unrecoverable — quarantine. Never let the entry vanish with zero trace.
 quarantine_payload=$(
-  printf '%s' "$line" | PBT_QUARANTINE_REASON="$fail_reason" python3 -c '
+  printf '%s' "$line" | PBT_QUARANTINE_REASON="$fail_reason" python3 -I -c '
 import sys, json, os
 from datetime import datetime, timezone
+
 raw = sys.stdin.read()
 try:
     entry = json.loads(raw)
@@ -912,10 +1777,8 @@ if [ -n "$quarantine_payload" ] && printf '%s\n' "$quarantine_payload" >> "$QUAR
   exit 1
 fi
 
-# Last-resort fallback: quarantine write failed — dump payload to stderr.
 printf 'pbt-log.sh: quarantine write failed (%s); raw payload follows\n%s\n' "$fail_reason" "$line" >&2
 exit 1
-
 PBT_LOG_EOF
   chmod +x "$log_file"
   green "✓ Shared gated log helper → ${log_file}"
@@ -938,8 +1801,22 @@ PBT_LOG_EOF
 set -uo pipefail
 
 export PBT_DASHBOARD_URL="${PBT_DASHBOARD_URL:-https://pbt-dashboard.vercel.app}"
+# Dashboard API token. Same resolution as the bypass below: env, then a local
+# file outside the repo. /api/log now refuses unauthenticated writes, so an
+# absent token means entries queue in ~/.pbt-log.jsonl and re-sync once it is
+# set — nothing is lost, but the dashboard will fall behind until then.
+if [ -z "${PBT_API_TOKEN:-}" ] && [ -r "$HOME/.pbt/api-token" ]; then
+  PBT_API_TOKEN="$(tr -d '[:space:]' < "$HOME/.pbt/api-token")"
+fi
 export PBT_API_TOKEN="${PBT_API_TOKEN:-}"
-export PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d}"
+# Vercel protection-bypass token. Never baked in as a literal: this repo is
+# published and served over a public CDN, so any default here is disclosed the
+# moment it is committed. Resolution order is env, then a local file outside
+# the repo. Absent is tolerated — sync just gets a 401 and retries later.
+if [ -z "${PBT_VERCEL_BYPASS:-}" ] && [ -r "$HOME/.pbt/vercel-bypass" ]; then
+  PBT_VERCEL_BYPASS="$(tr -d '[:space:]' < "$HOME/.pbt/vercel-bypass")"
+fi
+export PBT_VERCEL_BYPASS="${PBT_VERCEL_BYPASS:-}"
 
 LOG_FILE="$HOME/.pbt-log.jsonl"
 STATE_FILE="$HOME/.pbt-sync-state"
@@ -948,6 +1825,23 @@ LOCK_DIR="$HOME/.pbt-sync.lock"
 MAX_PER_RUN=200
 
 [ -f "$LOG_FILE" ] || exit 0
+
+# Self-healing lint before sync. Catches any entry that reached the log without
+# going through pbt-log.sh (four did between 2026-08-19 and 2026-09-15, each
+# surviving days until the Monday audit). Normalizing here also stops malformed
+# entries being POSTed and rejected — see the HTTP 400 skips for lines 837,
+# 1089, 1122 and 1144 in ~/.pbt-sync-errors.log.
+#
+# pbt-lint.py adjusts STATE_FILE itself if it has to remove a line, so it must
+# run BEFORE the cursor is read below. It always exits 0.
+# Findings go to ~/PBT/ rather than $HOME because that is the folder the
+# Monday audit has mounted — otherwise the audit cannot see what the lint
+# caught during the week.
+if [ -f "$HOME/.pbt/bin/pbt-lint.py" ]; then
+  PBT_LOG_FILE="$LOG_FILE" PBT_SYNC_STATE="$STATE_FILE" \
+  PBT_LINT_FINDINGS="$HOME/PBT/.pbt-lint-findings.jsonl" \
+    python3 -I "$HOME/.pbt/bin/pbt-lint.py" 2>/dev/null || true
+fi
 
 # Single-flight lock with stale reclaim (a killed worker must not wedge sync).
 if [ -d "$LOCK_DIR" ] && find "$LOCK_DIR" -maxdepth 0 -mmin +2 >/dev/null 2>&1; then
@@ -1231,7 +2125,11 @@ else:
 backfill_missing() {
   local log_file="$HOME/.pbt-log.jsonl"
   local dashboard_url="https://pbt-dashboard.vercel.app"
-  local bypass="uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d"
+  # Resolved, never baked in — install.sh is served over a public CDN.
+  local bypass="${PBT_VERCEL_BYPASS:-}"
+  if [ -z "$bypass" ] && [ -r "$HOME/.pbt/vercel-bypass" ]; then
+    bypass="$(tr -d '[:space:]' < "$HOME/.pbt/vercel-bypass")"
+  fi
 
   if [ ! -f "$log_file" ]; then
     dim "  (no local log at $log_file — skipping backfill)"
@@ -1713,7 +2611,15 @@ After every completed task (including Trivial), log metrics.
 | "We're wrapping up the session, I'll log next time." | There is no next time. The log is the last action of this task, before anything else. |
 | "I summarized in my response — that's enough." | The response is for the user. The log entry is for the system. They serve different purposes. |
 
-**⛔ MANDATORY: Re-read the schema file before writing the log.** Do not write the log from memory. Field names have exact spellings — aliases (`timestamp`, `tier`, `goal`, `files_touched`) will corrupt the log. The log helper rejects aliases (nonzero exit → quarantine); use exact field names only.
+**⛔ MANDATORY: Re-read the schema file before writing the log.** Do not write the log from memory. Field names have exact spellings, and every one of the 27 fields belongs in the entry.
+
+The helper validates the **full schema** and repairs what it can rather than rejecting: a missing field gets its default, `files_changed: ["a.tsx","b.tsx"]` becomes `2`, an alias like `files_touched` is mapped to the real field, and an off-schema key such as `outcome` or `result` is moved into `notes` as a `[pbt-salvage]` block. It prints on stderr whatever it corrected.
+
+**Do not treat that as licence to be sloppy.** Normalization is a safety net for the log, not a substitute for a correct entry — a defaulted field records nothing, and a salvaged key means a real metric ended up as free text. If stderr shows corrections, the payload was wrong; fix it next time. Only four things are unrecoverable and quarantine the entry outright: unparseable JSON, no `ts`, no `task`, and a `triage` that isn't one of the four values.
+
+**`user`, `project` and `language` are the fields most often dropped**, and each defaults to `"unknown"`, which makes the task unattributable in every report. As of 2026-09-16, 17.9% of the log is unattributable for exactly this reason. Populate `user` from `$(whoami)`, `project` from the git repo root's basename, and `language` from the primary language of the change.
+
+**The triage label is response text, not data.** The `P.B.T. ` prefix belongs on the first line of your reply; the `triage` field takes the bare value (`"Complex"`, never `"P.B.T. Complex"`).
 
 ```bash
 cat ~/.pbt/log-schema.md
@@ -1730,6 +2636,8 @@ Then:
 3. If `$PBT_SLACK_WEBHOOK` is set, send to Slack per the reference file
 
 If the pipe or curl command fails, note the failure to the user and move on — a logging failure should not block the user. But you must *attempt* it before declaring done.
+
+**A nonzero exit from `pbt-log.sh` means the entry was quarantined, not logged.** The reason is on stderr. Tell the user, in one line, that the task is done but the log entry was rejected and why — do not report a clean "done". The entry is recoverable from `~/.pbt-log-quarantine.jsonl`.
 
 **Field reference** (how to populate non-obvious fields):
 - `tests_written`: count of new test cases (not files), 0 for Trivial tasks
@@ -2008,11 +2916,28 @@ DESIGN_SKILL_EOF
 
   cat > "${staging}/plan-build-test-design/scripts/pbt_post.py" <<'DESIGN_POST_EOF'
 #!/usr/bin/env python3
-"""PBT Design log poster — validate then POST to the dashboard.
+"""PBT Design log poster — normalize, append locally when possible, then POST.
 
-Mirrors ~/.pbt/bin/pbt-log.sh gate rules and dashboard/api/log.js:
-  required ts, triage (exact enum), task; extras allowed; no alias rename.
-Does not write ~/.pbt-log.jsonl (Claude Design sandbox has no Mac home sync).
+Uses the shared 27-field contract in pbt_schema.py rather than its own rules.
+Before 2026-09-16 this file carried a hand-copied 3-field check (ts / triage /
+task, extras allowed), one of four such copies; design entries therefore
+reached the dashboard unvalidated for the other 24 fields.
+
+Two behaviours changed on 2026-09-16:
+
+1. **Local append.** This used to POST only, with the note "Does not write
+   ~/.pbt-log.jsonl (Claude Design sandbox has no Mac home sync)". The
+   consequence was that every Claude Design task was absent from the local log
+   and therefore invisible to the weekly audit, which reads only that file. It
+   now also appends through ~/.pbt/bin/pbt-log.sh whenever that helper is
+   reachable, and silently skips the append when it is not — so design work
+   shows up in the audit on a real Mac, and the sandbox behaves as before.
+
+2. **No baked-in credential.** The Vercel protection-bypass token used to sit
+   here as a literal default. This repo is published and served over a public
+   CDN, so that value must be treated as disclosed. The token now comes from
+   the environment or from ~/.pbt/vercel-bypass, and its absence is reported
+   rather than silently papered over.
 """
 
 from __future__ import annotations
@@ -2025,54 +2950,86 @@ import sys
 import urllib.error
 import urllib.request
 
-VALID_TIERS = {"Trivial", "Small Scope", "Complex", "Investigative"}
+# The schema module ships alongside this script (the design sandbox has no
+# ~/.pbt), but prefer the installed copy when running on a real machine so a
+# stale bundled copy cannot win.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _candidate in (os.path.expanduser("~/.pbt/lib"), _HERE):
+    if os.path.exists(os.path.join(_candidate, "pbt_schema.py")):
+        sys.path.insert(0, _candidate)
+
+try:
+    import pbt_schema
+    from pbt_schema import normalize
+except Exception as _ex:  # pragma: no cover
+    pbt_schema = None
+    normalize = None
+    _IMPORT_ERROR = _ex
+
 DASHBOARD_URL = os.environ.get(
     "PBT_DASHBOARD_URL", "https://pbt-dashboard.vercel.app"
 ).rstrip("/")
-BYPASS = os.environ.get(
-    "PBT_VERCEL_BYPASS", "uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d"
-)
-API_TOKEN = os.environ.get("PBT_API_TOKEN", "")
+LOG_HELPER = os.path.expanduser("~/.pbt/bin/pbt-log.sh")
+BYPASS_FILE = os.path.expanduser("~/.pbt/vercel-bypass")
+API_TOKEN_FILE = os.path.expanduser("~/.pbt/api-token")
 
 
-def validate(entry: object) -> list[str]:
-    if not isinstance(entry, dict):
-        return ["parse_error: body must be a JSON object"]
-    problems: list[str] = []
-    if not entry.get("ts"):
-        problems.append("missing ts")
-    triage = entry.get("triage")
-    if not triage:
-        problems.append("missing triage")
-    elif triage not in VALID_TIERS:
-        problems.append("invalid triage: %r" % (triage,))
-    if not entry.get("task"):
-        problems.append("missing task")
-    return problems
+def _secret(env_var: str, path: str) -> str:
+    """Read a secret from the environment, else a local file. Never a literal."""
+    value = os.environ.get(env_var, "").strip()
+    if value:
+        return value
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
 
 
-def post_curl(body: bytes) -> int:
+API_TOKEN = _secret("PBT_API_TOKEN", API_TOKEN_FILE)
+
+
+def resolve_bypass() -> str:
+    """Vercel protection-bypass token, from the environment or a local file.
+
+    Never defaulted to a literal: this file is published through a public CDN.
+    """
+    return _secret("PBT_VERCEL_BYPASS", BYPASS_FILE)
+
+
+def append_locally(entry: dict) -> str:
+    """Append via the gated helper. Returns a short status for the caller.
+
+    Best-effort by design: the design sandbox has no Mac home, so a missing
+    helper is normal there and must not fail the task.
+    """
+    if not os.path.exists(LOG_HELPER):
+        return "skipped (no ~/.pbt/bin/pbt-log.sh — not a synced machine)"
+    try:
+        proc = subprocess.run(
+            ["bash", LOG_HELPER],
+            input=json.dumps(entry).encode("utf-8"),
+            capture_output=True,
+            timeout=15,
+        )
+    except Exception as ex:
+        return "failed (%s)" % ex
+    if proc.returncode == 0:
+        return "appended to ~/.pbt-log.jsonl"
+    detail = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+    return "quarantined by helper (%s)" % (detail or "no reason given")
+
+
+def post_curl(body: bytes, bypass: str) -> int:
     cmd = [
-        "curl",
-        "-sS",
-        "-o",
-        "/dev/null",
-        "-w",
-        "%{http_code}",
-        "-X",
-        "POST",
-        f"{DASHBOARD_URL}/api/log",
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        f"x-vercel-protection-bypass: {BYPASS}",
-        "--connect-timeout",
-        "5",
-        "--max-time",
-        "15",
-        "-d",
-        "@-",
+        "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+        "-X", "POST", f"{DASHBOARD_URL}/api/log",
+        "-H", "Content-Type: application/json",
+        "--connect-timeout", "5", "--max-time", "15",
+        "-d", "@-",
     ]
+    if bypass:
+        cmd.extend(["-H", f"x-vercel-protection-bypass: {bypass}"])
     if API_TOKEN:
         cmd.extend(["-H", f"Authorization: Bearer {API_TOKEN}"])
     proc = subprocess.run(cmd, input=body, capture_output=True, timeout=20)
@@ -2088,15 +3045,12 @@ def post_curl(body: bytes) -> int:
     return 0
 
 
-def post_urllib(body: bytes) -> int:
+def post_urllib(body: bytes, bypass: str) -> int:
+    headers = {"Content-Type": "application/json"}
+    if bypass:
+        headers["x-vercel-protection-bypass"] = bypass
     req = urllib.request.Request(
-        f"{DASHBOARD_URL}/api/log",
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "x-vercel-protection-bypass": BYPASS,
-        },
+        f"{DASHBOARD_URL}/api/log", data=body, method="POST", headers=headers
     )
     if API_TOKEN:
         req.add_header("Authorization", f"Bearer {API_TOKEN}")
@@ -2126,33 +3080,67 @@ def main() -> int:
     if not raw.strip():
         print("pbt_post.py: empty stdin", file=sys.stderr)
         return 1
+
+    if normalize is None:
+        print("pbt_post.py: pbt_schema.py not importable (%s); refusing to post "
+              "unvalidated" % _IMPORT_ERROR, file=sys.stderr)
+        return 1
+
     try:
-        entry = json.loads(raw)
+        entry, dupes = pbt_schema.loads(raw)
     except Exception as ex:
         print("pbt_post.py: parse_error: %s" % ex, file=sys.stderr)
         return 1
 
-    problems = validate(entry)
-    if problems:
-        print("pbt_post.py: rejected (%s)" % "; ".join(problems), file=sys.stderr)
-        print(
-            "Use exact field names: ts, triage, task — never timestamp/tier/goal.",
-            file=sys.stderr,
-        )
+    clean, changes, fatal = normalize(entry, dupes)
+    if fatal:
+        print("pbt_post.py: rejected (%s)" % "; ".join(fatal), file=sys.stderr)
+        print("Required: ts, task, and triage as one of "
+              "Trivial / Small Scope / Complex / Investigative. "
+              "The triage field takes the bare value — not the "
+              "'P.B.T. ' response label.", file=sys.stderr)
         return 1
 
-    if not entry.get("user"):
-        entry["user"] = os.environ.get("USER", "unknown")
+    if changes:
+        fills = [c for c in changes if c.startswith("filled missing ")]
+        fixes = [c for c in changes if not c.startswith("filled missing ")]
+        parts = []
+        if fixes:
+            parts.append("corrected: " + "; ".join(fixes))
+        if fills:
+            names = [c.split()[2].split("=")[0] for c in fills]
+            parts.append("defaulted %d absent field(s): %s"
+                         % (len(fills), ", ".join(names)))
+        print("pbt_post.py: " + " | ".join(parts), file=sys.stderr)
 
-    body = json.dumps(entry).encode("utf-8")
+    if clean.get("user") in (None, "", "unknown"):
+        env_user = os.environ.get("USER", "").strip()
+        if env_user:
+            clean["user"] = env_user
+
+    # Local first: the audit reads ~/.pbt-log.jsonl, so this is what makes
+    # design work visible in the weekly report at all.
+    print("pbt_post.py: local append %s" % append_locally(clean), file=sys.stderr)
+
+    bypass = resolve_bypass()
+    if not bypass:
+        print("pbt_post.py: no PBT_VERCEL_BYPASS in the environment and no %s — "
+              "posting without the bypass header; expect HTTP 401 if the "
+              "deployment is protected." % BYPASS_FILE, file=sys.stderr)
+    if not API_TOKEN:
+        print("pbt_post.py: no PBT_API_TOKEN in the environment and no %s — "
+              "/api/log refuses unauthenticated writes, so expect HTTP 401. "
+              "The local append above already succeeded, so the entry is not "
+              "lost." % API_TOKEN_FILE, file=sys.stderr)
+
+    body = json.dumps(clean).encode("utf-8")
     if shutil.which("curl"):
-        return post_curl(body)
-    return post_urllib(body)
+        return post_curl(body, bypass)
+    return post_urllib(body, bypass)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 DESIGN_POST_EOF
 
   cat > "${staging}/plan-build-test-design/scripts/log-schema.md" <<'DESIGN_SCHEMA_EOF'

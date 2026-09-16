@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_HELPER="${1:-$HOME/.cursor/hooks/pbt-log.sh}"
 POST="${ROOT}/claude-design/plan-build-test-design/scripts/pbt_post.py"
-BYPASS="${PBT_VERCEL_BYPASS:-uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d}"
+BYPASS="${PBT_VERCEL_BYPASS:-$( [ -r "$HOME/.pbt/vercel-bypass" ] && tr -d '[:space:]' < "$HOME/.pbt/vercel-bypass" )}"
 DASH="${PBT_DASHBOARD_URL:-https://pbt-dashboard.vercel.app}"
 
 green() { printf '\033[32m%s\033[0m\n' "$1"; }

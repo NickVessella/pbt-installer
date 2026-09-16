@@ -33,7 +33,19 @@ QUARANTINE_FILE = Path.home() / ".pbt-log-quarantine.jsonl"
 DASHBOARD_URL = os.environ.get(
     "PBT_DASHBOARD_URL", "https://pbt-dashboard.vercel.app"
 )
-VERCEL_BYPASS = os.environ.get("PBT_VERCEL_BYPASS", "uuN7ItKyFWWg5ypAFwWBjhqFJIkxiv6d")
+def _bypass() -> str:
+    """Env, then ~/.pbt/vercel-bypass. Never a committed literal."""
+    v = os.environ.get("PBT_VERCEL_BYPASS", "").strip()
+    if v:
+        return v
+    try:
+        with open(os.path.expanduser("~/.pbt/vercel-bypass"), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+VERCEL_BYPASS = _bypass()
 
 VALID_TRIAGE = {"Trivial", "Small Scope", "Complex", "Investigative"}
 
