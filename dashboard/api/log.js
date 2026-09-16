@@ -22,12 +22,30 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  // Fail closed. This used to read `if (token) { ...require it... }`, which
+  // meant "authenticate only if someone remembered to configure it" — and
+  // PBT_API_TOKEN was never set on the project, so the branch never ran and
+  // this write endpoint had no application-level auth at all. Vercel
+  // Deployment Protection was the only gate, and its bypass secret had been
+  // published through a public CDN.
+  //
+  // A missing token is now a server misconfiguration (503), not an open door.
   const token = process.env.PBT_API_TOKEN;
-  if (token) {
-    const auth = req.headers.authorization;
-    if (!auth || auth !== `Bearer ${token}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+  if (!token) {
+    console.error('PBT_API_TOKEN is not configured — refusing writes');
+    return res.status(503).json({
+      error: 'Server misconfigured: PBT_API_TOKEN is not set. ' +
+             'Writes are refused rather than accepted unauthenticated.',
+    });
+  }
+
+  const auth = req.headers.authorization || '';
+  const expected = `Bearer ${token}`;
+  const provided = Buffer.from(auth);
+  const wanted = Buffer.from(expected);
+  // Constant-time compare; lengths must match first or timingSafeEqual throws.
+  if (provided.length !== wanted.length || !crypto.timingSafeEqual(provided, wanted)) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   // Normalize rather than reject: a 400 here used to mean the entry was lost
