@@ -36,6 +36,32 @@ LIB_DIR="${PBT_LIB_DIR:-$HOME/.pbt/lib}"
 line=$(cat)
 [ -n "$(printf '%s' "$line" | tr -d '[:space:]')" ] || exit 0
 
+# Derive the attribution fields the agent keeps forgetting.
+#
+# `user` and `project` are mechanically knowable at write time — this script
+# runs on the developer's machine, in the task's working directory — yet
+# SKILL.md asked the MODEL to supply them, making them something an LLM can
+# omit. It did, on 15-18% of entries (46% in one week), and each omission
+# became "unknown", which silently drops the task out of every per-project and
+# per-person report. As of 2026-09-17: 204 entries with no project.
+#
+# So the helper now works them out itself. A field you never have to supply is
+# a field you cannot forget. Values the agent DID provide always win; these are
+# a floor, not an override.
+#
+# `project` is taken only from a git root. Falling back to $(basename $PWD)
+# would cheerfully record "nick.vessella" for anything run from $HOME, and a
+# confidently wrong project is worse than a known-absent one.
+#
+# `language` is deliberately NOT derived: only the agent knows what it changed.
+# It stays the emitter's responsibility and stays measured.
+PBT_DERIVED_USER="$(whoami 2>/dev/null || true)"
+PBT_DERIVED_PROJECT=""
+if _git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  [ -n "$_git_root" ] && PBT_DERIVED_PROJECT="$(basename "$_git_root")"
+fi
+export PBT_DERIVED_USER PBT_DERIVED_PROJECT
+
 # Normalize: clean JSON on stdout, "FATAL:<reason>" on stdout if unrecoverable,
 # human-readable repair notes on stderr (which passes through to the caller).
 #
@@ -65,10 +91,32 @@ except Exception as ex:
     sys.stdout.write("FATAL:parse_error: %s" % ex)
     sys.exit(0)
 
+# Fill the derived attribution fields BEFORE normalizing, so the schema sees a
+# real value rather than defaulting to "unknown". Only ever fills a gap — an
+# agent-supplied value is never overwritten.
+_derived = []
+for _field, _env in (("user", "PBT_DERIVED_USER"), ("project", "PBT_DERIVED_PROJECT")):
+    _value = os.environ.get(_env, "").strip()
+    if _value and entry.get(_field) in (None, "", "unknown"):
+        entry[_field] = _value
+        _derived.append(_field)
+
 clean, changes, fatal = normalize(entry, dupes)
 if fatal:
     sys.stdout.write("FATAL:" + "; ".join(fatal))
     sys.exit(0)
+
+# Record that the helper supplied these, not the agent. The value is correct
+# either way, but the audit has to be able to tell a well-formed payload from
+# one the safety net rescued — otherwise the fallback quietly hides a
+# regression in the emitter, which is the same trap normalization itself set.
+if _derived and clean is not None:
+    _block = "%s %s" % (
+        pbt_schema.SALVAGE_TAG,
+        json.dumps({"_derived_by_helper": _derived}, separators=(",", ":")),
+    )
+    clean["notes"] = ("%s %s" % (clean["notes"], _block)) if clean.get("notes") else _block
+    changes.append("derived %s from the environment" % ", ".join(_derived))
 if changes:
     # Keep the report readable: list real corrections, summarize default-fills.
     fills = [c for c in changes if c.startswith("filled missing ")]

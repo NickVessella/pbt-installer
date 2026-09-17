@@ -580,7 +580,9 @@ The helper validates the **full schema** and repairs what it can rather than rej
 
 **Do not treat that as licence to be sloppy.** Normalization is a safety net for the log, not a substitute for a correct entry — a defaulted field records nothing, and a salvaged key means a real metric ended up as free text. If stderr shows corrections, the payload was wrong; fix it next time. Only four things are unrecoverable and quarantine the entry outright: unparseable JSON, no `ts`, no `task`, and a `triage` that isn't one of the four values.
 
-**`user`, `project` and `language` are the fields most often dropped**, and each defaults to `"unknown"`, which makes the task unattributable in every report. As of 2026-09-16, 17.9% of the log is unattributable for exactly this reason. Populate `user` from `$(whoami)`, `project` from the git repo root's basename, and `language` from the primary language of the change.
+**`language` is the one attribution field only you can supply.** Nothing else knows what you changed, so if you omit it the entry is permanently unattributable by language — as of 2026-09-17 that accounts for 238 entries, every single one of the log's unattributable records. Always set it to the primary language of the change (`ts`, `py`, `css`, `md`, `sh`, …).
+
+`user` and `project` are now derived by the helper — `whoami`, and the basename of the git repo root — because they are knowable at write time and were being dropped on 15–18% of entries. **Still set them when you know them:** the helper only fills a gap, never overrides you, and it cannot derive `project` outside a git repo. When it has to step in it records `_derived_by_helper` on the entry, and the weekly audit reports that as emitter sloppiness rather than a clean payload.
 
 **The triage label is response text, not data.** The `P.B.T. ` prefix belongs on the first line of your reply; the `triage` field takes the bare value (`"Complex"`, never `"P.B.T. Complex"`).
 
@@ -1379,11 +1381,17 @@ def emitter_quality(entries):
     salvaged = []
     triage_corrected = []
     defaulted_attribution = []
+    derived_by_helper = []
+    unknown_by_field = {f: 0 for f in ATTRIBUTION_FIELDS}
 
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         total += 1
+
+        for field in ATTRIBUTION_FIELDS:
+            if entry.get(field) == "unknown":
+                unknown_by_field[field] += 1
 
         if any(entry.get(f) == "unknown" for f in ATTRIBUTION_FIELDS):
             unattributed.append(entry)
@@ -1395,12 +1403,23 @@ def emitter_quality(entries):
             triage_corrected.append((entry, payload["_triage_corrected_from"]))
         if payload.get("_defaulted_attribution"):
             defaulted_attribution.append((entry, payload["_defaulted_attribution"]))
+        if payload.get("_derived_by_helper"):
+            derived_by_helper.append((entry, payload["_derived_by_helper"]))
 
     def pct(n):
         return round(100.0 * n / total, 1) if total else 0.0
 
     return {
         "total": total,
+        # Per-field, because the union hides which field is the problem. On
+        # 2026-09-17 the union read 17.8% and looked like a broad attribution
+        # failure; it was `language` on all 238 entries, `project` on 204, and
+        # `user` on none. `project` is the one that breaks analysis — a task
+        # with no project drops out of every per-project report — so report the
+        # fields separately and lead with project rather than the union.
+        "unknown_by_field": unknown_by_field,
+        "unknown_pct_by_field": {f: pct(n) for f, n in unknown_by_field.items()},
+        # Retained as a rollup; prefer unknown_by_field when diagnosing.
         "unattributed": len(unattributed),
         "unattributed_pct": pct(len(unattributed)),
         "unattributed_entries": unattributed,
@@ -1408,6 +1427,11 @@ def emitter_quality(entries):
         "salvaged_pct": pct(len(salvaged)),
         "triage_corrected": triage_corrected,
         "defaulted_attribution": defaulted_attribution,
+        # The helper had to derive user/project because the emitter omitted
+        # them. The stored value is correct, so this never shows up as a
+        # violation — but a rising count means the emitter is degrading behind
+        # a working safety net, which is exactly what a fallback can hide.
+        "derived_by_helper": derived_by_helper,
     }
 
 
@@ -1696,6 +1720,32 @@ LIB_DIR="${PBT_LIB_DIR:-$HOME/.pbt/lib}"
 line=$(cat)
 [ -n "$(printf '%s' "$line" | tr -d '[:space:]')" ] || exit 0
 
+# Derive the attribution fields the agent keeps forgetting.
+#
+# `user` and `project` are mechanically knowable at write time — this script
+# runs on the developer's machine, in the task's working directory — yet
+# SKILL.md asked the MODEL to supply them, making them something an LLM can
+# omit. It did, on 15-18% of entries (46% in one week), and each omission
+# became "unknown", which silently drops the task out of every per-project and
+# per-person report. As of 2026-09-17: 204 entries with no project.
+#
+# So the helper now works them out itself. A field you never have to supply is
+# a field you cannot forget. Values the agent DID provide always win; these are
+# a floor, not an override.
+#
+# `project` is taken only from a git root. Falling back to $(basename $PWD)
+# would cheerfully record "nick.vessella" for anything run from $HOME, and a
+# confidently wrong project is worse than a known-absent one.
+#
+# `language` is deliberately NOT derived: only the agent knows what it changed.
+# It stays the emitter's responsibility and stays measured.
+PBT_DERIVED_USER="$(whoami 2>/dev/null || true)"
+PBT_DERIVED_PROJECT=""
+if _git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  [ -n "$_git_root" ] && PBT_DERIVED_PROJECT="$(basename "$_git_root")"
+fi
+export PBT_DERIVED_USER PBT_DERIVED_PROJECT
+
 # Normalize: clean JSON on stdout, "FATAL:<reason>" on stdout if unrecoverable,
 # human-readable repair notes on stderr (which passes through to the caller).
 #
@@ -1725,10 +1775,32 @@ except Exception as ex:
     sys.stdout.write("FATAL:parse_error: %s" % ex)
     sys.exit(0)
 
+# Fill the derived attribution fields BEFORE normalizing, so the schema sees a
+# real value rather than defaulting to "unknown". Only ever fills a gap — an
+# agent-supplied value is never overwritten.
+_derived = []
+for _field, _env in (("user", "PBT_DERIVED_USER"), ("project", "PBT_DERIVED_PROJECT")):
+    _value = os.environ.get(_env, "").strip()
+    if _value and entry.get(_field) in (None, "", "unknown"):
+        entry[_field] = _value
+        _derived.append(_field)
+
 clean, changes, fatal = normalize(entry, dupes)
 if fatal:
     sys.stdout.write("FATAL:" + "; ".join(fatal))
     sys.exit(0)
+
+# Record that the helper supplied these, not the agent. The value is correct
+# either way, but the audit has to be able to tell a well-formed payload from
+# one the safety net rescued — otherwise the fallback quietly hides a
+# regression in the emitter, which is the same trap normalization itself set.
+if _derived and clean is not None:
+    _block = "%s %s" % (
+        pbt_schema.SALVAGE_TAG,
+        json.dumps({"_derived_by_helper": _derived}, separators=(",", ":")),
+    )
+    clean["notes"] = ("%s %s" % (clean["notes"], _block)) if clean.get("notes") else _block
+    changes.append("derived %s from the environment" % ", ".join(_derived))
 if changes:
     # Keep the report readable: list real corrections, summarize default-fills.
     fills = [c for c in changes if c.startswith("filled missing ")]
@@ -2639,7 +2711,9 @@ The helper validates the **full schema** and repairs what it can rather than rej
 
 **Do not treat that as licence to be sloppy.** Normalization is a safety net for the log, not a substitute for a correct entry — a defaulted field records nothing, and a salvaged key means a real metric ended up as free text. If stderr shows corrections, the payload was wrong; fix it next time. Only four things are unrecoverable and quarantine the entry outright: unparseable JSON, no `ts`, no `task`, and a `triage` that isn't one of the four values.
 
-**`user`, `project` and `language` are the fields most often dropped**, and each defaults to `"unknown"`, which makes the task unattributable in every report. As of 2026-09-16, 17.9% of the log is unattributable for exactly this reason. Populate `user` from `$(whoami)`, `project` from the git repo root's basename, and `language` from the primary language of the change.
+**`language` is the one attribution field only you can supply.** Nothing else knows what you changed, so if you omit it the entry is permanently unattributable by language — as of 2026-09-17 that accounts for 238 entries, every single one of the log's unattributable records. Always set it to the primary language of the change (`ts`, `py`, `css`, `md`, `sh`, …).
+
+`user` and `project` are now derived by the helper — `whoami`, and the basename of the git repo root — because they are knowable at write time and were being dropped on 15–18% of entries. **Still set them when you know them:** the helper only fills a gap, never overrides you, and it cannot derive `project` outside a git repo. When it has to step in it records `_derived_by_helper` on the entry, and the weekly audit reports that as emitter sloppiness rather than a clean payload.
 
 **The triage label is response text, not data.** The `P.B.T. ` prefix belongs on the first line of your reply; the `triage` field takes the bare value (`"Complex"`, never `"P.B.T. Complex"`).
 

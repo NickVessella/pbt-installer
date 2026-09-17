@@ -564,11 +564,17 @@ def emitter_quality(entries):
     salvaged = []
     triage_corrected = []
     defaulted_attribution = []
+    derived_by_helper = []
+    unknown_by_field = {f: 0 for f in ATTRIBUTION_FIELDS}
 
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         total += 1
+
+        for field in ATTRIBUTION_FIELDS:
+            if entry.get(field) == "unknown":
+                unknown_by_field[field] += 1
 
         if any(entry.get(f) == "unknown" for f in ATTRIBUTION_FIELDS):
             unattributed.append(entry)
@@ -580,12 +586,23 @@ def emitter_quality(entries):
             triage_corrected.append((entry, payload["_triage_corrected_from"]))
         if payload.get("_defaulted_attribution"):
             defaulted_attribution.append((entry, payload["_defaulted_attribution"]))
+        if payload.get("_derived_by_helper"):
+            derived_by_helper.append((entry, payload["_derived_by_helper"]))
 
     def pct(n):
         return round(100.0 * n / total, 1) if total else 0.0
 
     return {
         "total": total,
+        # Per-field, because the union hides which field is the problem. On
+        # 2026-09-17 the union read 17.8% and looked like a broad attribution
+        # failure; it was `language` on all 238 entries, `project` on 204, and
+        # `user` on none. `project` is the one that breaks analysis — a task
+        # with no project drops out of every per-project report — so report the
+        # fields separately and lead with project rather than the union.
+        "unknown_by_field": unknown_by_field,
+        "unknown_pct_by_field": {f: pct(n) for f, n in unknown_by_field.items()},
+        # Retained as a rollup; prefer unknown_by_field when diagnosing.
         "unattributed": len(unattributed),
         "unattributed_pct": pct(len(unattributed)),
         "unattributed_entries": unattributed,
@@ -593,6 +610,11 @@ def emitter_quality(entries):
         "salvaged_pct": pct(len(salvaged)),
         "triage_corrected": triage_corrected,
         "defaulted_attribution": defaulted_attribution,
+        # The helper had to derive user/project because the emitter omitted
+        # them. The stored value is correct, so this never shows up as a
+        # violation — but a rising count means the emitter is degrading behind
+        # a working safety net, which is exactly what a fallback can hide.
+        "derived_by_helper": derived_by_helper,
     }
 
 
