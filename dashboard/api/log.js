@@ -63,16 +63,38 @@ module.exports = async function handler(req, res) {
 
   // Per-entry storage: each POST writes its own blob, eliminating the
   // read-modify-write race that lost concurrent writes under shared-file storage.
+  //
+  // The pathname is DETERMINISTIC, derived from ts|user|task. It used to end in
+  // crypto.randomBytes(4), which defeated the `allowOverwrite: false` guard
+  // sitting right below it: a re-post could never collide, so instead of being
+  // rejected it landed as a brand-new blob. And re-posts are routine —
+  // pbt-sync.sh walks the log by line offset with a cursor that clamps and
+  // resets, so the same entry gets sent again after any interruption. 104
+  // duplicate blobs had accumulated by 2026-09-17.
+  //
+  // With a content-derived name, a re-post addresses the same blob and
+  // overwrites it with identical bytes. Writes become idempotent, which is the
+  // property a retrying client actually needs.
+  //
+  // The readable ts-user prefix is kept so blobs stay greppable in the store;
+  // only the suffix changed from random to derived. 16 hex chars is 64 bits —
+  // at a few thousand entries the collision probability is negligible, and a
+  // collision would require identical ts, user AND task anyway.
   const ts = safeSegment(entry.ts);
   const user = safeSegment(entry.user || 'unknown', 32);
-  const rand = crypto.randomBytes(4).toString('hex');
-  const pathname = `pbt-entry/${ts}-${user}-${rand}.json`;
+  const fingerprint = crypto
+    .createHash('sha256')
+    .update(`${entry.ts}|${entry.user}|${entry.task}`)
+    .digest('hex')
+    .slice(0, 16);
+  const pathname = `pbt-entry/${ts}-${user}-${fingerprint}.json`;
 
   try {
     await put(pathname, JSON.stringify(entry), {
       access: 'private',
       addRandomSuffix: false,
-      allowOverwrite: false,
+      // Overwriting is the point: the same logical entry must occupy one blob.
+      allowOverwrite: true,
       contentType: 'application/json',
     });
     return res.status(201).json({ ok: true, ts: entry.ts, pathname });
