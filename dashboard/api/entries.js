@@ -3,14 +3,45 @@ const { list } = require('@vercel/blob');
 const LEGACY_PREFIX = 'pbt-entries.jsonl';
 const PER_ENTRY_PREFIX = 'pbt-entry/';
 const LIST_PAGE_SIZE = 1000;
+/** Cap concurrent blob downloads to avoid EMFILE / DNS EBUSY in serverless. */
+const FETCH_CONCURRENCY = 20;
+
+async function mapPool(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
 
 async function fetchBlobText(blob) {
-  const response = await fetch(blob.downloadUrl, {
-    headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` },
-    cache: 'no-store',
-  });
-  if (!response.ok) return '';
-  return response.text();
+  const headers = {};
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  // A thrown fetch — which is exactly what EMFILE/DNS exhaustion produces —
+  // used to reject the whole pool and 500 the entire dashboard load. One bad
+  // socket should cost one entry, not the page. Returning '' drops just this
+  // blob; the caller already filters empties.
+  try {
+    const response = await fetch(blob.downloadUrl, {
+      headers,
+      cache: 'no-store',
+    });
+    if (!response.ok) return '';
+    return await response.text();
+  } catch (err) {
+    console.error('Blob read failed for', blob.pathname, '-', String(err && err.message || err));
+    return '';
+  }
 }
 
 async function readLegacy() {
@@ -44,7 +75,7 @@ async function readPerEntry() {
     cursor = result.cursor;
   } while (cursor);
 
-  const texts = await Promise.all(all.map(fetchBlobText));
+  const texts = await mapPool(all, FETCH_CONCURRENCY, fetchBlobText);
   return texts
     .map((text) => {
       if (!text) return null;
