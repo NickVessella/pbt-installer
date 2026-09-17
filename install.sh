@@ -2224,6 +2224,17 @@ backfill_missing() {
   if [ -z "$bypass" ] && [ -r "$HOME/.pbt/vercel-bypass" ]; then
     bypass="$(tr -d '[:space:]' < "$HOME/.pbt/vercel-bypass")"
   fi
+  # /api/log fails closed on PBT_API_TOKEN, so the reconcile needs it too.
+  # Without it every POST here returns 401, which was then mis-reported as
+  # a validation failure — 94 entries on 2026-09-17.
+  local api_token="${PBT_API_TOKEN:-}"
+  if [ -z "$api_token" ] && [ -r "$HOME/.pbt/api-token" ]; then
+    api_token="$(tr -d '[:space:]' < "$HOME/.pbt/api-token")"
+  fi
+  if [ -z "$api_token" ]; then
+    yellow "⚠ no PBT_API_TOKEN (env or ~/.pbt/api-token) — the dashboard will"
+    yellow "  reject every backfill POST with 401. Set it, then re-run."
+  fi
 
   if [ ! -f "$log_file" ]; then
     dim "  (no local log at $log_file — skipping backfill)"
@@ -2272,6 +2283,7 @@ print('\n'.join(sorted(seen)))
   result=$(REMOTE_SET="$remote_set" \
            DASHBOARD_URL="$dashboard_url" \
            BYPASS="$bypass" \
+           API_TOKEN="$api_token" \
            LOG_FILE="$log_file" \
     python3 <<'PY'
 import json, os, subprocess, sys
@@ -2279,10 +2291,12 @@ import json, os, subprocess, sys
 remote = set(line for line in os.environ.get('REMOTE_SET','').splitlines() if line)
 dashboard_url = os.environ['DASHBOARD_URL']
 bypass = os.environ['BYPASS']
+api_token = os.environ.get('API_TOKEN', '')
 log_file = os.environ['LOG_FILE']
 
 posted = failed = skipped = 0
 total = 0
+codes = {}
 
 with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
     for raw in f:
@@ -2307,15 +2321,15 @@ with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
 
         body = json.dumps(entry)
         try:
-            r = subprocess.run(
-                ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}',
-                 '--connect-timeout', '5', '--max-time', '15',
-                 '-X', 'POST', f'{dashboard_url}/api/log',
-                 '-H', 'Content-Type: application/json',
-                 '-H', f'x-vercel-protection-bypass: {bypass}',
-                 '-d', body],
-                capture_output=True, text=True, timeout=20,
-            )
+            cmd = ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}',
+                   '--connect-timeout', '5', '--max-time', '15',
+                   '-X', 'POST', f'{dashboard_url}/api/log',
+                   '-H', 'Content-Type: application/json',
+                   '-H', f'x-vercel-protection-bypass: {bypass}']
+            if api_token:
+                cmd += ['-H', f'Authorization: Bearer {api_token}']
+            cmd += ['-d', body]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
             code = r.stdout.strip()
         except Exception:
             code = '000'
@@ -2326,13 +2340,16 @@ with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
             remote.add(key)
         else:
             failed += 1
+            codes[code] = codes.get(code, 0) + 1
 
-print(f'{posted}|{failed}|{skipped}|{total}')
+# Report the actual HTTP codes rather than guessing at a cause.
+detail = ','.join('%s:%d' % (c, k) for c, k in sorted(codes.items()) if c != '201')
+print(f'{posted}|{failed}|{skipped}|{total}|{detail}')
 PY
 )
 
-  local bf_posted bf_failed bf_skipped bf_total
-  IFS='|' read -r bf_posted bf_failed bf_skipped bf_total <<< "$result"
+  local bf_posted bf_failed bf_skipped bf_total bf_codes
+  IFS='|' read -r bf_posted bf_failed bf_skipped bf_total bf_codes <<< "$result"
   bf_posted=${bf_posted:-0}
   bf_failed=${bf_failed:-0}
   bf_skipped=${bf_skipped:-0}
@@ -2346,7 +2363,12 @@ PY
   fi
   dim "  scanned $bf_total local entries: $bf_posted posted, $bf_skipped already present, $bf_failed failed"
   if [ "$bf_failed" -gt 0 ]; then
-    yellow "⚠ $bf_failed entries failed validation (likely missing required fields or invalid triage casing — these have been broken for a while; not caused by this install)"
+    yellow "⚠ $bf_failed entries could not be posted — HTTP ${bf_codes:-unknown}"
+    case "${bf_codes:-}" in
+      *401*) yellow "  401 = auth, not data. Check PBT_API_TOKEN matches the value on the Vercel project and that ~/.pbt/vercel-bypass is current." ;;
+      *503*) yellow "  503 = PBT_API_TOKEN is not configured on the Vercel project." ;;
+      *400*) yellow "  400 = the dashboard judged the entry unrecoverable; run pbt-repair.py to see which." ;;
+    esac
   fi
 }
 
