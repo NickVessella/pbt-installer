@@ -102,7 +102,39 @@ module.exports = async function handler(req, res) {
 
   try {
     const [legacy, perEntry] = await Promise.all([readLegacy(), readPerEntry()]);
-    const entries = [...legacy, ...perEntry];
+
+    // Deduplicate the two sources. They overlap: the one-shot migration that
+    // backfilled user attribution wrote to BOTH the legacy pbt-entries.jsonl
+    // blob and the per-entry pbt-entry/* blobs, and the legacy blob was never
+    // retired. A blind [...legacy, ...perEntry] therefore double-counted every
+    // migrated entry — 2,788 rows for 2,371 distinct timestamps on
+    // 2026-09-17 — and `total` reported the inflated figure, so per-person
+    // counts and averages on the dashboard were overstated for the
+    // pre-migration window.
+    //
+    // Key on ts|user|task rather than ts alone. With eight contributors,
+    // same-second timestamps across different people are legitimate and must
+    // survive; a genuine re-log of the same task has a different ts. All three
+    // matching means it really is one entry seen twice.
+    //
+    // Per-entry wins: it is the current write path, and the migration copied
+    // INTO it, so it holds the corrected attribution.
+    const byKey = new Map();
+    const keyOf = (e) => `${e.ts || ''}|${e.user || ''}|${e.task || ''}`;
+    for (const e of perEntry) byKey.set(keyOf(e), e);
+    let suppressed = 0;
+    for (const e of legacy) {
+      const k = keyOf(e);
+      if (byKey.has(k)) { suppressed += 1; continue; }
+      byKey.set(k, e);
+    }
+    if (suppressed) {
+      console.log(
+        'entries: suppressed %d legacy row(s) already present per-entry (legacy=%d, per-entry=%d, merged=%d)',
+        suppressed, legacy.length, perEntry.length, byKey.size,
+      );
+    }
+    const entries = [...byKey.values()];
 
     entries.sort((a, b) => {
       const ta = new Date(a.ts).getTime() || 0;
